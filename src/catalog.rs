@@ -10,10 +10,20 @@ use crate::schema::{Catalog, MAX_MANIFEST_BYTES, MAX_SIGNATURE_BYTES};
 use crate::{Error, Result};
 
 pub const VERIFIED_CACHE_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
-pub const DEFAULT_CATALOG_URL: &str =
-    "https://github.com/EnchiladaBoy/UCI-Grabber/releases/latest/download/catalog.json";
-pub const DEFAULT_SIGNATURE_URL: &str =
-    "https://github.com/EnchiladaBoy/UCI-Grabber/releases/latest/download/catalog.sig";
+pub const DEFAULT_CATALOG_URL: &str = concat!(
+    "https://github.com/EnchiladaBoy/UCI-Grabber/releases/download/v",
+    env!("CARGO_PKG_VERSION"),
+    "/catalog-v",
+    env!("CARGO_PKG_VERSION"),
+    ".json"
+);
+pub const DEFAULT_SIGNATURE_URL: &str = concat!(
+    "https://github.com/EnchiladaBoy/UCI-Grabber/releases/download/v",
+    env!("CARGO_PKG_VERSION"),
+    "/catalog-v",
+    env!("CARGO_PKG_VERSION"),
+    ".sig"
+);
 
 #[derive(Clone, Debug)]
 pub struct VerifiedCatalog {
@@ -76,7 +86,7 @@ impl VerifiedCatalog {
 
 pub fn bundled_catalog() -> Result<VerifiedCatalog> {
     let public_key = bundled_public_key()?;
-    VerifiedCatalog::verify_bootstrap(
+    VerifiedCatalog::verify(
         include_bytes!("../catalog/catalog.json"),
         include_bytes!("../catalog/catalog.sig"),
         &public_key,
@@ -308,7 +318,9 @@ mod tests {
 
     #[test]
     fn bundled_catalog_signature_is_valid() {
-        assert!(bundled_catalog().unwrap().catalog.recipes.is_empty());
+        bundled_catalog().unwrap();
+        assert!(DEFAULT_CATALOG_URL.contains(env!("CARGO_PKG_VERSION")));
+        assert!(!DEFAULT_CATALOG_URL.contains("/latest/"));
     }
 
     #[test]

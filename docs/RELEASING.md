@@ -1,99 +1,73 @@
 # Release and compliance gates
 
-UCI Grabber application packages contain the Apache-2.0 Rust application and
-compatible dependency notices only. The separately distributed Maia3 native runtime contains
-Maia3 code offered upstream under AGPL-3.0 and packaged dependencies under their
-respective terms. It must be published as separate assets with notices, build
-provenance, reviewed source/build materials, a written Corresponding-Source
-determination, and checksums.
-Checkpoint bytes are fetched directly from their immutable Hugging Face
-revisions; they are never bundled in UCI Grabber application or GitHub release
-assets.
+UCI Grabber releases contain the Apache-2.0 application, compatible Rust
+dependency notices, and one small UCI Grabber launcher per supported platform.
+They do not contain Maia3, CPython, PyTorch, NumPy, python-chess, or Maia
+checkpoint bytes. A user-selected install retrieves those exact bytes directly
+from immutable upstream URLs and assembles the portable engine locally.
 
-Every stable tag builds `uci-grabber-windows-x86_64.zip`,
-`UCI-Grabber-macos-aarch64.app.zip`, and Linux x86-64/arm64 tarballs. Each
-package contains the Apache license, README, and a `cargo-about` notice
-inventory generated from the locked dependency graph.
+Every stable tag builds portable application and launcher archives for Windows
+x86-64, macOS ARM64, Linux x86-64, and Linux ARM64. Windows carries the
+no-console `UCI-Grabber.exe` plus `uci-grabber-cli.exe`; macOS and Linux carry
+`uci-grabber`. The packaged `portable.flag` keeps mutable state and installed
+engines in `UCI-Grabber-Data/` beside the extracted application.
 
-Application and Maia3 runtime archives are portable, checksummed release assets
-with no trusted publisher signature. They use no Authenticode or Apple Developer
-ID credentials and are not notarized. PyInstaller/macOS may apply required ad-hoc
-signatures, which provide no publisher identity or trust. Document the resulting
-operating-system warning in release notes. Publisher signing is not a license
-requirement and is not part of the portable release contract.
+Linux x86-64 and ARM64 artifacts are built natively on Ubuntu 22.04 LTS
+(Jammy) and require glibc 2.35 or newer on the matching architecture. Both
+Linux jobs inspect the exact executable copied into the release archive: it
+must be a matching ELF64 binary, may not require a glibc symbol newer than
+2.35, and must have no unresolved dependency under `ldd` on the Jammy runner.
 
-Keep the complete extracted application folder together. Windows packages carry
-`UCI-Grabber.exe` for the no-console GUI and `uci-grabber-cli.exe` for terminal
-commands; macOS and Linux retain `uci-grabber`. The packaged `portable.flag`
-places mutable state and the installed engine library in an adjacent
-`UCI-Grabber-Data/` directory rather than a machine-specific application-data
-location.
+No Authenticode, Apple Developer ID, notarization credential, repository
+variable, private release secret, or local GitHub CLI login is required.
+Required macOS ad-hoc signatures provide no publisher identity. A one-time
+Ed25519 key authenticates only the immutable catalog embedded in one app
+release; it is not native-code or publisher signing.
 
-Before a stable catalog release:
+## Checked-in review
 
-1. Confirm the production public key in `catalog.pub`, the PEM file, and the
-   signature on the empty bundled catalog match the private key retained only in
-   protected signing storage. App-only releases verify and publish those committed
-   catalog bytes without handling the private key. A reviewed Maia3 release must
-   additionally configure `CATALOG_ED25519_PRIVATE_KEY_BASE64`, because its catalog
-   includes hashes of the platform artifacts built in CI. The workflow derives that
-   secret's public key and requires it to match `catalog.pub` before signing. The
-   application embeds the public key and bundled catalog, so mismatched bytes fail
-   its tests and the release gate.
-2. Obtain written review for download, use, and redistribution of the exact
-   Maia3 5M, 23M, and 79M checkpoint revisions. Set repository variable
-   `MAIA3_MODEL_LICENSE_REVIEW` to the SHA-256 of
-   `packaging/maia3/component-metadata.json` from the tagged commit.
-3. Run the manual **Prepare Maia3 wheelhouse review** workflow. It downloads but
-   never installs candidate wheels, then uploads a canonical
-   `WHEELHOUSE.lock.json` for every platform. Review every filename,
-   compatibility tag, size, and digest, then set these variables to the SHA-256
-   of the corresponding inventory file:
+`packaging/maia3/release-review.json` is the fail-closed release attestation.
+`review_digest.py verify-release --tag vMAJOR.MINOR.PATCH` checks the exact tag,
+component metadata, direct-download manifest, reviewed distribution decision,
+checkpoint-term facts, and digest of every active launcher/catalog/release
+input.
 
-   - `MAIA3_WHEELHOUSE_REVIEW_WINDOWS_X86_64`
-   - `MAIA3_WHEELHOUSE_REVIEW_MACOS_AARCH64`
-   - `MAIA3_WHEELHOUSE_REVIEW_LINUX_X86_64`
-   - `MAIA3_WHEELHOUSE_REVIEW_LINUX_AARCH64`
+`direct-downloads.json` pins portable Python, Maia source, python-chess, and the
+runtime-only wheel set by immutable HTTPS URL, byte count, SHA-256, archive
+format, and collision-free destination. Offline validation also requires every
+wheel to match the appropriate checked platform inventory. The 5M and 23M
+model cards apply CC BY 4.0 only to the paper, point to the Maia repository for
+code and weights terms, and have no independent weights LICENSE; the 79M card
+states AGPLv3. The review consequently approves direct end-user retrieval only.
 
-   The release workflow resolves the inventories again, uploads them for audit,
-   and requires those exact variable values before pip installs anything.
-4. Review `packaging/maia3/corresponding-source-policy.json` against the exact
-   frozen runtime and all four reviewed wheel inventories. Determine whether
-   CPython, PyTorch, NumPy, PyInstaller, or transitive dependency sources/offers
-   must be added. After satisfying that determination, compute the combined
-   source/build-and-wheel review digest and set it as
-   `MAIA3_CORRESPONDING_SOURCE_REVIEW`:
+## Tag publication flow
 
-   ```console
-   python3 packaging/maia3/review_digest.py source-release \
-     --wheelhouse "windows-x86_64=$WINDOWS_WHEELHOUSE_SHA256" \
-     --wheelhouse "macos-aarch64=$MACOS_WHEELHOUSE_SHA256" \
-     --wheelhouse "linux-x86_64=$LINUX_X86_WHEELHOUSE_SHA256" \
-     --wheelhouse "linux-aarch64=$LINUX_ARM_WHEELHOUSE_SHA256"
-   ```
+1. Run all Rust, Python, schema, metadata, catalog, formatting, lint, and
+   workflow checks.
+2. Confirm `python3 packaging/maia3/review_digest.py verify-release --tag
+   vMAJOR.MINOR.PATCH` succeeds on the exact commit to tag.
+3. Push that commit and then its stable tag using the repository's existing SSH
+   write access. The repository may be public; local `gh` authentication is not
+   part of the process.
+4. GitHub Actions builds and packages the four UCI Grabber launchers. It then
+   hashes them and combines those hashes with the reviewed direct-upstream
+   artifacts and checkpoint hashes to generate the populated catalog.
+5. Actions generates a one-time Ed25519 key, signs the exact catalog bytes, and
+   discards the private key. Every app build embeds that same populated
+   catalog, signature, and public key. Remote catalog assets are
+   version-specific and never use a mutable `releases/latest` URL.
+6. The final job creates or reuses the exact draft release, replaces every
+   expected asset on a rerun, rejects any extra/missing asset, and compares
+   remote SHA-256 digests with the staged files before publishing and marking it
+   latest. Publication alone receives job-scoped `contents: write`.
 
-   The source input set includes the exact release and wheelhouse-review workflow
-   files, as well as the Maia3 packaging definitions. Changing any source input
-   or wheelhouse digest invalidates this value.
-5. Confirm every Maia runtime archive contains `CORRESPONDING-SOURCE.txt`, and
-   that the generated recipe Source link resolves to the exact same-tag
-   `maia3-corresponding-source.tar.gz` release asset. Confirm release notes state
-   that portable application and runtime archives carry no trusted publisher
-   signature and may trigger operating-system warnings.
-6. Confirm the release contains all four application packages, the signed
-   catalog, and checksums. When Maia3 is enabled, also require all four
-   model-free runtimes, `maia3-corresponding-source.tar.gz`, and
-   `MAIA3-NOTICES.txt`.
-7. The workflow creates a draft release so an incomplete upload can never become
-   the live catalog endpoint. Inspect every asset and checksum, publish the draft,
-   mark it latest, then verify `releases/latest/download/catalog.json` and
-   `catalog.sig` before announcing the release.
+The release contains four app archives, four UCI Grabber Maia launcher
+archives, `MAIA3-DIRECT-DOWNLOAD-NOTICES.txt`, versioned catalog
+JSON/signature/public-key assets, the signed empty generic catalog retained for
+v0.1.0 compatibility, both schema documents, and `SHA256SUMS`. It contains no
+third-party engine/runtime/checkpoint asset.
 
-Changing any model revision, digest, runtime input, or build definition changes
-the model, source-input-set, or wheelhouse review digest and requires a new
-review/release.
-For v0.1.1 and later, an absent or stale model-review variable fails the release;
-the workflow must never publish an empty fallback catalog. Missing or stale
-source and wheelhouse reviews also fail before installation or publication.
-These gates record a review decision; they do not replace legal advice or prove
-that a particular source classification is valid.
+Changing an upstream URL, byte count, digest, checkpoint revision, launcher,
+entry point, extraction rule, review decision, workflow, catalog trust design,
+or tag invalidates the checked review. These gates document the maintainer's
+release decision; they are not legal advice.

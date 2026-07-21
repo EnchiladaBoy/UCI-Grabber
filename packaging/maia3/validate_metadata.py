@@ -3,23 +3,73 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sys
 from pathlib import Path, PurePosixPath
+from urllib.parse import urlsplit
 
 
 ROOT = Path(__file__).resolve().parent
 METADATA = ROOT / "component-metadata.json"
-SOURCE_POLICY = ROOT / "corresponding-source-policy.json"
+DIRECT_DOWNLOADS = ROOT / "direct-downloads.json"
 HEX_40 = re.compile(r"^[0-9a-f]{40}$")
 HEX_64 = re.compile(r"^[0-9a-f]{64}$")
 VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$")
 EXPECTED_PLATFORMS = {
-    "windows-x86_64": ("zip", ".zip", ".exe"),
-    "macos-aarch64": ("tar.zst", ".tar.zst", ""),
-    "linux-x86_64": ("tar.zst", ".tar.zst", ""),
-    "linux-aarch64": ("tar.zst", ".tar.zst", ""),
+    "windows-x86_64": (
+        "zip",
+        "uci-grabber-maia3-launcher-windows-x86_64.zip",
+        "maia3-launcher.exe",
+    ),
+    "macos-aarch64": (
+        "tar.gz",
+        "uci-grabber-maia3-launcher-macos-aarch64.tar.gz",
+        "maia3-launcher",
+    ),
+    "linux-x86_64": (
+        "tar.gz",
+        "uci-grabber-maia3-launcher-linux-x86_64.tar.gz",
+        "maia3-launcher",
+    ),
+    "linux-aarch64": (
+        "tar.gz",
+        "uci-grabber-maia3-launcher-linux-aarch64.tar.gz",
+        "maia3-launcher",
+    ),
+}
+DIRECT_DOWNLOADS_SHA256 = "bf4dd026518d45fd31b782fc85aa45568a21c9e2005a8ca88cf9ca945254f715"
+RUNTIME_PACKAGES = (
+    "filelock",
+    "fsspec",
+    "jinja2",
+    "markupsafe",
+    "mpmath",
+    "networkx",
+    "numpy",
+    "setuptools",
+    "sympy",
+    "torch",
+    "typing-extensions",
+)
+COMMON_RUNTIME_PACKAGES = {
+    "filelock",
+    "fsspec",
+    "jinja2",
+    "mpmath",
+    "networkx",
+    "setuptools",
+    "sympy",
+    "typing-extensions",
+}
+PLATFORM_RUNTIME_PACKAGES = {"markupsafe", "numpy", "torch"}
+DIRECT_ARTIFACT_FIELDS = {"url", "byte_count", "sha256", "format", "destination"}
+DIRECT_DOWNLOAD_HOSTS = {
+    "github.com",
+    "codeload.github.com",
+    "files.pythonhosted.org",
+    "download-r2.pytorch.org",
 }
 EXPECTED_MODELS = {
     "maia3-5m": (
@@ -48,90 +98,168 @@ def require(condition: bool, message: str) -> None:
         raise ValueError(message)
 
 
+def safe_relative(value: object, field: str) -> str:
+    require(isinstance(value, str), f"{field} must be a string")
+    path = PurePosixPath(value)
+    require(not path.is_absolute(), f"{field} must be relative")
+    require(".." not in path.parts and "\\" not in value, f"{field} is unsafe")
+    require(value not in {"", "."}, f"{field} must name a file or directory")
+    return value
+
+
 def safe_relative_template(value: object, field: str) -> None:
     require(isinstance(value, str), f"{field} must be a string")
-    rendered = value.replace("{model}", "maia3-5m")
-    path = PurePosixPath(rendered)
-    require(not path.is_absolute(), f"{field} must be relative")
-    require(".." not in path.parts and "\\" not in rendered, f"{field} is unsafe")
     require(value.count("{model}") == 1, f"{field} must contain one model placeholder")
+    safe_relative(value.replace("{model}", "maia3-5m"), field)
 
 
-def validate_source_policy() -> None:
-    policy = json.loads(SOURCE_POLICY.read_text(encoding="utf-8"))
+def direct_artifact(value: object, label: str) -> dict[str, object]:
+    require(isinstance(value, dict), f"{label} must be an object")
+    require(set(value) == DIRECT_ARTIFACT_FIELDS, f"{label} has unknown or missing fields")
+    url = value["url"]
+    require(isinstance(url, str), f"{label} URL must be a string")
+    parsed = urlsplit(url)
     require(
-        set(policy) == {"schema", "publication", "distribution", "required_written_review"},
-        "source policy has unknown or missing top-level fields",
-    )
-    require(policy["schema"] == 1, "source policy schema must be 1")
-    require(
-        policy["publication"]
-        == {
-            "default": "blocked_pending_written_corresponding_source_review",
-            "gate_environment": "MAIA3_CORRESPONDING_SOURCE_REVIEW",
-            "gate_value": "sha256(source-release-review-v3: source-review-v2 inputs plus four reviewed wheelhouse digests; see review_digest.py)",
-        },
-        "corresponding-source publication must remain fail-closed",
-    )
-    distribution = policy["distribution"]
-    require(
-        set(distribution)
-        == {
-            "form",
-            "agpl_component",
-            "corresponding_source_asset",
-            "corresponding_source_availability",
-            "included_source_materials",
-            "not_bundled_as_source",
-        },
-        "source policy distribution has unknown or missing fields",
+        parsed.scheme == "https"
+        and parsed.hostname in DIRECT_DOWNLOAD_HOSTS
+        and parsed.username is None
+        and parsed.password is None
+        and not parsed.query
+        and not parsed.fragment,
+        f"{label} URL must be an approved direct HTTPS download",
     )
     require(
-        distribution["agpl_component"].endswith(
-            "1e13597c42d4858b7cfd7cfdae01e297263364b2"
-        ),
-        "source policy must bind the reviewed Maia3 commit",
+        type(value["byte_count"]) is int and 0 < value["byte_count"] <= 1024 * 1024 * 1024,
+        f"{label} byte count is invalid",
     )
     require(
-        distribution["corresponding_source_asset"] == "maia3-corresponding-source.tar.gz",
-        "source policy must name the immutable release source asset",
+        isinstance(value["sha256"], str) and HEX_64.fullmatch(value["sha256"]) is not None,
+        f"{label} SHA-256 is invalid",
+    )
+    require(value["format"] in {"zip", "tar.gz"}, f"{label} format is invalid")
+    safe_relative(value["destination"], f"{label} destination")
+    return value
+
+
+def validate_direct_downloads(path: Path = DIRECT_DOWNLOADS) -> dict[str, object]:
+    raw = path.read_bytes()
+    require(
+        hashlib.sha256(raw).hexdigest() == DIRECT_DOWNLOADS_SHA256,
+        "direct-downloads.json does not match the reviewed exact artifact manifest",
+    )
+    data = json.loads(raw)
+    require(
+        isinstance(data, dict) and set(data) == {"schema", "python", "sources", "packages"},
+        "direct downloads have unknown or missing top-level fields",
     )
     require(
-        "same GitHub release" in distribution["corresponding_source_availability"]
-        and "without additional charge" in distribution["corresponding_source_availability"],
-        "source policy must require same-release source availability",
+        data["schema"] == "uci-grabber-direct-downloads/v1",
+        "direct downloads schema is unsupported",
+    )
+
+    python = data["python"]
+    require(
+        isinstance(python, dict)
+        and set(python) == {"distribution", "version", "release", "platforms"},
+        "portable Python has unknown or missing fields",
     )
     require(
-        distribution["not_bundled_as_source"]
-        == [
-            "CPython 3.12.10",
-            "PyTorch 2.11.0 CPU",
-            "NumPy 2.2.6",
-            "PyInstaller 6.21.0 bootloader and other reviewed wheel dependencies",
-        ],
-        "source policy must enumerate source materials not bundled by default",
+        (python["distribution"], python["version"], python["release"])
+        == ("python-build-standalone", "3.12.13", "20260510"),
+        "portable Python release changed",
     )
     require(
-        distribution["included_source_materials"]
-        == [
-            "exact Maia3 upstream checkout",
-            "exact chess 1.11.2 source distribution",
-            "UCI Grabber Maia3 build and packaging definitions",
-            "exact UCI Grabber release and wheelhouse-review workflow definitions",
-        ],
-        "source policy must enumerate every digest-bound source/build input class",
+        isinstance(python["platforms"], dict)
+        and set(python["platforms"]) == set(EXPECTED_PLATFORMS),
+        "portable Python platform set changed",
     )
-    review = policy["required_written_review"]
+    python_artifacts = {}
+    for platform, value in python["platforms"].items():
+        artifact = direct_artifact(value, f"{platform} portable Python")
+        require(artifact["format"] == "tar.gz", "portable Python must be a tar.gz")
+        require(
+            artifact["destination"] == "package/python-runtime",
+            "portable Python destination changed",
+        )
+        require(
+            urlsplit(artifact["url"]).hostname == "github.com",
+            "portable Python must come directly from python-build-standalone",
+        )
+        python_artifacts[platform] = artifact
+
+    sources = data["sources"]
+    require(isinstance(sources, dict) and set(sources) == {"maia3", "chess"},
+            "direct source set changed")
+    source_destinations = {
+        "maia3": ("package/maia-source", "codeload.github.com"),
+        "chess": ("package/chess-source", "files.pythonhosted.org"),
+    }
+    source_artifacts = {}
+    for name, (destination, hostname) in source_destinations.items():
+        artifact = direct_artifact(sources[name], f"{name} source")
+        require(artifact["format"] == "tar.gz", f"{name} source must be a tar.gz")
+        require(artifact["destination"] == destination, f"{name} source destination changed")
+        require(urlsplit(artifact["url"]).hostname == hostname, f"{name} source host changed")
+        source_artifacts[name] = artifact
+
+    packages = data["packages"]
     require(
-        isinstance(review, list)
-        and len(review) == 4
-        and all(isinstance(item, str) and item.strip() for item in review),
-        "source policy must preserve all written-review questions",
+        isinstance(packages, dict) and set(packages) == {"required", "common", "platforms"},
+        "runtime packages have unknown or missing fields",
     )
+    require(packages["required"] == list(RUNTIME_PACKAGES), "required runtime package set changed")
+    common = packages["common"]
+    platforms = packages["platforms"]
+    require(isinstance(common, dict) and set(common) == COMMON_RUNTIME_PACKAGES,
+            "common runtime package set changed")
+    require(isinstance(platforms, dict) and set(platforms) == set(EXPECTED_PLATFORMS),
+            "platform runtime package set changed")
+
+    all_platform_packages: dict[str, list[dict[str, object]]] = {}
+    for platform in EXPECTED_PLATFORMS:
+        variants = platforms[platform]
+        require(isinstance(variants, dict) and set(variants) == PLATFORM_RUNTIME_PACKAGES,
+                f"{platform} runtime package set changed")
+        artifacts = []
+        destinations = set()
+        for package in RUNTIME_PACKAGES:
+            artifact = direct_artifact(
+                common.get(package, variants.get(package)),
+                f"{platform} {package} package",
+            )
+            require(artifact["format"] == "zip", f"{package} must be extracted as a wheel")
+            require(
+                artifact["destination"] == f"package/packages/{package}",
+                f"{package} package destination changed",
+            )
+            require(artifact["destination"] not in destinations,
+                    f"{platform} package destinations are not unique")
+            destinations.add(artifact["destination"])
+            hostname = urlsplit(artifact["url"]).hostname
+            expected_host = (
+                "download-r2.pytorch.org"
+                if package == "torch" and platform != "macos-aarch64"
+                else "files.pythonhosted.org"
+            )
+            require(hostname == expected_host, f"{platform} {package} download host changed")
+            filename = urlsplit(artifact["url"]).path.rsplit("/", 1)[-1]
+            require(filename.endswith(".whl"), f"{platform} {package} is not a wheel URL")
+            artifacts.append(artifact)
+        require(len(artifacts) == 11, f"{platform} must use eleven runtime dependency wheels")
+        all_platform_packages[platform] = artifacts
+
+    for platform in EXPECTED_PLATFORMS:
+        destinations = {
+            python_artifacts[platform]["destination"],
+            *(artifact["destination"] for artifact in source_artifacts.values()),
+            *(artifact["destination"] for artifact in all_platform_packages[platform]),
+        }
+        require(len(destinations) == 14, f"{platform} direct artifact destinations overlap")
+    return data
 
 
 def validate() -> dict[str, object]:
-    validate_source_policy()
+    validate_direct_downloads()
     data = json.loads(METADATA.read_text(encoding="utf-8"))
     require(
         set(data) == {"schema", "publication", "component", "runtimes", "models"},
@@ -142,11 +270,11 @@ def validate() -> dict[str, object]:
     require(
         publication
         == {
-            "default": "excluded_pending_checkpoint_download_use_redistribution_review",
-            "gate_environment": "MAIA3_MODEL_LICENSE_REVIEW",
-            "gate_value": "sha256(component-metadata.json)",
+            "default": "excluded_unless_checked_release_review_verifies",
+            "gate_file": "release-review.json",
+            "gate_value": "exact tag, this file's SHA-256, direct-retrieval decision, and pinned checkpoint facts",
         },
-        "Maia3 publication must remain fail-closed behind the reviewed digest",
+        "Maia3 publication must remain fail-closed behind the checked release review",
     )
 
     component = data["component"]
@@ -157,7 +285,6 @@ def validate() -> dict[str, object]:
             "minimum_fisheye_version",
             "upstream_repository",
             "upstream_commit",
-            "corresponding_source_asset",
             "notices_asset",
         },
         "component has unknown or missing fields",
@@ -176,15 +303,14 @@ def validate() -> dict[str, object]:
         "upstream commit must be an immutable full SHA-1",
     )
     require(
-        component["corresponding_source_asset"] == "maia3-corresponding-source.tar.gz",
-        "unexpected corresponding-source asset name",
+        component["notices_asset"] == "MAIA3-DIRECT-DOWNLOAD-NOTICES.txt",
+        "unexpected notices asset name",
     )
-    require(component["notices_asset"] == "MAIA3-NOTICES.txt", "unexpected notices asset name")
 
     runtimes = data["runtimes"]
     require(set(runtimes) == set(EXPECTED_PLATFORMS), "runtime platform set changed")
     seen_assets: set[str] = set()
-    for platform, (archive, suffix, executable_suffix) in EXPECTED_PLATFORMS.items():
+    for platform, (archive, asset, executable) in EXPECTED_PLATFORMS.items():
         runtime = runtimes[platform]
         require(
             set(runtime)
@@ -192,13 +318,19 @@ def validate() -> dict[str, object]:
             f"{platform} runtime has unknown or missing fields",
         )
         require(runtime["archive"] == archive, f"unexpected {platform} archive type")
-        require(runtime["asset"].endswith(suffix), f"unexpected {platform} asset suffix")
+        require(runtime["asset"] == asset, f"unexpected {platform} launcher asset")
         require(runtime["asset"] not in seen_assets, "runtime asset names must be unique")
         seen_assets.add(runtime["asset"])
-        safe_relative_template(runtime["executable_template"], "executable_template")
+        safe_relative(runtime["executable_template"], "executable_template")
         safe_relative_template(runtime["model_destination_template"], "model destination")
-        rendered = runtime["executable_template"].format(model="maia3-5m")
-        require(rendered.endswith(executable_suffix), f"unexpected {platform} executable suffix")
+        require(
+            runtime["executable_template"] == executable,
+            f"unexpected {platform} launcher executable",
+        )
+        require(
+            runtime["model_destination_template"] == "models/{model}.pt",
+            f"unexpected {platform} model destination",
+        )
 
     models = data["models"]
     require(set(models) == set(EXPECTED_MODELS), "reviewed model set changed")

@@ -14,6 +14,25 @@ use crate::{Error, Result};
 
 pub const REGISTRY_SCHEMA: &str = "uci-grabber-registry/v1";
 pub(crate) const INSTALL_RECORD_FILE: &str = "uci-grabber-install.json";
+pub const PAYLOAD_REVIEW_MARKER: &[u8; 31] = b"\0UCI_GRABBER_PAYLOAD_REVIEW_V1\0";
+pub const PAYLOAD_REVIEW_MARKER_LEN: usize = PAYLOAD_REVIEW_MARKER.len();
+pub const PAYLOAD_REVIEW_DIGEST_LEN: usize = 64;
+pub const PAYLOAD_REVIEW_COUNT_LEN: usize = 16;
+pub const PAYLOAD_REVIEW_LEN: usize =
+    PAYLOAD_REVIEW_MARKER_LEN + PAYLOAD_REVIEW_DIGEST_LEN + 2 * PAYLOAD_REVIEW_COUNT_LEN;
+
+const fn payload_review_placeholder() -> [u8; PAYLOAD_REVIEW_LEN] {
+    let mut result = [b'X'; PAYLOAD_REVIEW_LEN];
+    let mut index = 0;
+    while index < PAYLOAD_REVIEW_MARKER_LEN {
+        result[index] = PAYLOAD_REVIEW_MARKER[index];
+        index += 1;
+    }
+    result
+}
+
+const PAYLOAD_REVIEW_PLACEHOLDER_BYTES: [u8; PAYLOAD_REVIEW_LEN] = payload_review_placeholder();
+pub const PAYLOAD_REVIEW_PLACEHOLDER: &[u8; PAYLOAD_REVIEW_LEN] = &PAYLOAD_REVIEW_PLACEHOLDER_BYTES;
 const PORTABLE_MARKER: &str = "portable.flag";
 const PORTABLE_DATA_DIRECTORY: &str = "UCI-Grabber-Data";
 
@@ -411,13 +430,33 @@ fn safe_relative_path(path: &Path, allow_empty: bool) -> bool {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct PackageSnapshot {
+pub struct PackageSnapshot {
     pub sha256: String,
     pub file_count: u64,
     pub byte_count: u64,
 }
 
 pub(crate) fn package_snapshot(root: &Path) -> Result<PackageSnapshot> {
+    package_snapshot_with_options(root, None, true)
+}
+
+/// Fingerprint every regular file below `root` except one executable whose
+/// own bytes are independently authenticated by the caller.
+pub fn package_payload_snapshot(root: &Path, executable: &Path) -> Result<PackageSnapshot> {
+    let excluded = executable
+        .strip_prefix(root)
+        .map_err(|_| Error::UnsafeArchiveEntry(executable.display().to_string()))?;
+    if !safe_relative_path(excluded, false) {
+        return Err(Error::UnsafeArchiveEntry(executable.display().to_string()));
+    }
+    package_snapshot_with_options(root, Some(excluded), false)
+}
+
+fn package_snapshot_with_options(
+    root: &Path,
+    excluded: Option<&Path>,
+    skip_install_record: bool,
+) -> Result<PackageSnapshot> {
     let root_metadata = fs::symlink_metadata(root).map_err(|source| Error::io(root, source))?;
     if !root_metadata.is_dir() || root_metadata.file_type().is_symlink() {
         return Err(Error::UnsafeArchiveEntry(root.display().to_string()));
@@ -433,6 +472,8 @@ pub(crate) fn package_snapshot(root: &Path) -> Result<PackageSnapshot> {
         &mut seen,
         &mut entry_count,
         &mut byte_count,
+        excluded,
+        skip_install_record,
     )?;
     files.sort_by(|left, right| left.0.cmp(&right.0));
     let mut package_digest = Sha256::new();
@@ -458,6 +499,8 @@ fn collect_package_files(
     seen: &mut BTreeMap<String, String>,
     entry_count: &mut u64,
     byte_count: &mut u64,
+    excluded: Option<&Path>,
+    skip_install_record: bool,
 ) -> Result<()> {
     for entry in fs::read_dir(directory).map_err(|source| Error::io(directory, source))? {
         let entry = entry.map_err(|source| Error::io(directory, source))?;
@@ -465,11 +508,13 @@ fn collect_package_files(
         let relative = path
             .strip_prefix(root)
             .map_err(|_| Error::UnsafeArchiveEntry(path.display().to_string()))?;
+        if excluded.is_some_and(|excluded| relative == excluded) {
+            continue;
+        }
         let portable = portable_relative_path(relative)?;
-        let folded = portable.to_lowercase();
-        if let Some(previous) = seen.insert(folded, portable.clone()) {
+        if let Some(previous) = seen.insert(portable.clone(), portable.clone()) {
             return Err(Error::UnsafeArchiveEntry(format!(
-                "package path collision: `{previous}` and `{portable}`"
+                "duplicate package path: `{previous}` and `{portable}`"
             )));
         }
         *entry_count = entry_count.saturating_add(1);
@@ -483,9 +528,18 @@ fn collect_package_files(
             .file_type()
             .map_err(|source| Error::io(&path, source))?;
         if file_type.is_dir() {
-            collect_package_files(root, &path, files, seen, entry_count, byte_count)?;
+            collect_package_files(
+                root,
+                &path,
+                files,
+                seen,
+                entry_count,
+                byte_count,
+                excluded,
+                skip_install_record,
+            )?;
         } else if file_type.is_file() {
-            if relative == Path::new(INSTALL_RECORD_FILE) {
+            if skip_install_record && relative == Path::new(INSTALL_RECORD_FILE) {
                 continue;
             }
             let length = entry
@@ -592,6 +646,83 @@ mod tests {
             portable_data_root(&temporary.path().join("uci-grabber")),
             None
         );
+    }
+
+    #[test]
+    fn package_snapshot_preserves_distinct_portable_paths() {
+        let temporary = tempfile::tempdir().unwrap();
+        if crate::extract::filesystem_is_case_insensitive(temporary.path()).unwrap() {
+            return;
+        }
+        std::fs::write(temporary.path().join("2621A"), b"upper").unwrap();
+        std::fs::write(temporary.path().join("2621a"), b"lower").unwrap();
+        let snapshot = package_snapshot(temporary.path()).unwrap();
+        assert_eq!(snapshot.file_count, 2);
+        assert_eq!(snapshot.byte_count, 10);
+    }
+
+    #[test]
+    fn payload_snapshot_excludes_only_the_selected_executable() {
+        let temporary = tempfile::tempdir().unwrap();
+        let executable = temporary.path().join("launcher");
+        std::fs::write(&executable, b"fingerprinted separately").unwrap();
+        std::fs::write(temporary.path().join("runtime"), b"payload").unwrap();
+        let first = package_payload_snapshot(temporary.path(), &executable).unwrap();
+        std::fs::write(&executable, b"changed launcher bytes").unwrap();
+        assert_eq!(
+            package_payload_snapshot(temporary.path(), &executable).unwrap(),
+            first
+        );
+        std::fs::write(temporary.path().join("runtime"), b"changed payload").unwrap();
+        assert_ne!(
+            package_payload_snapshot(temporary.path(), &executable).unwrap(),
+            first
+        );
+    }
+
+    #[test]
+    fn payload_snapshot_includes_a_same_named_package_file() {
+        let temporary = tempfile::tempdir().unwrap();
+        let executable = temporary.path().join("launcher");
+        let package_record = temporary.path().join(INSTALL_RECORD_FILE);
+        std::fs::write(&executable, b"fingerprinted separately").unwrap();
+        std::fs::write(&package_record, b"package payload").unwrap();
+        let first = package_payload_snapshot(temporary.path(), &executable).unwrap();
+        assert_eq!(first.file_count, 1);
+        std::fs::write(&package_record, b"changed package payload").unwrap();
+        assert_ne!(
+            package_payload_snapshot(temporary.path(), &executable).unwrap(),
+            first
+        );
+
+        let generation = package_snapshot(temporary.path()).unwrap();
+        assert_eq!(generation.file_count, 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn payload_snapshot_does_not_require_package_write_access() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let temporary = tempfile::tempdir().unwrap();
+        let package = temporary.path().join("package");
+        let runtime = package.join("runtime");
+        std::fs::create_dir_all(&runtime).unwrap();
+        let executable = package.join("launcher");
+        let payload = runtime.join("payload");
+        std::fs::write(&executable, b"fingerprinted separately").unwrap();
+        std::fs::write(&payload, b"read-only payload").unwrap();
+        let expected = package_payload_snapshot(&package, &executable).unwrap();
+
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o444)).unwrap();
+        std::fs::set_permissions(&payload, std::fs::Permissions::from_mode(0o444)).unwrap();
+        std::fs::set_permissions(&runtime, std::fs::Permissions::from_mode(0o555)).unwrap();
+        std::fs::set_permissions(&package, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let actual = package_payload_snapshot(&package, &executable).unwrap();
+        std::fs::set_permissions(&package, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::set_permissions(&runtime, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        assert_eq!(actual, expected);
     }
 
     #[test]

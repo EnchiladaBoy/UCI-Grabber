@@ -1,7 +1,9 @@
 use std::collections::BTreeSet;
 use std::fs::{self, OpenOptions};
-use std::io::Write as _;
+use std::io::{Seek as _, Write as _};
 use std::path::Path;
+#[cfg(target_os = "macos")]
+use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -10,7 +12,9 @@ use sha2::{Digest as _, Sha256};
 
 use crate::download::{Downloader, HttpDownloader, sha256_file};
 use crate::registry::{
-    INSTALL_RECORD_FILE, InstallRecord, InstallSource, Integrity, RegistryStore, package_snapshot,
+    INSTALL_RECORD_FILE, InstallRecord, InstallSource, Integrity, PAYLOAD_REVIEW_COUNT_LEN,
+    PAYLOAD_REVIEW_DIGEST_LEN, PAYLOAD_REVIEW_MARKER_LEN, PAYLOAD_REVIEW_PLACEHOLDER,
+    RegistryStore, package_payload_snapshot, package_snapshot,
 };
 use crate::schema::{ArchiveFormat, Artifact, ArtifactKind, Package, Recipe, current_platform};
 use crate::uci::{ValidationTimeouts, validate_engine_with_cancel};
@@ -219,7 +223,7 @@ impl Installer {
     ) -> Result<InstallRecord> {
         let downloads = staging.join(".downloads");
         fs::create_dir(&downloads).map_err(|source| Error::io(&downloads, source))?;
-        let mut extraction_budget = extract::ExtractionBudget::for_generation();
+        let mut extraction_budget = extract::ExtractionBudget::for_generation(staging)?;
         let mut completed_bytes = 0_u64;
         for (index, artifact) in package.artifacts.iter().enumerate() {
             check_cancel(cancel)?;
@@ -263,7 +267,14 @@ impl Installer {
                 completed_bytes,
                 total_bytes,
             );
-            extract::materialize(artifact, &downloaded, staging, &mut extraction_budget)?;
+            extract::materialize(artifact, &downloaded, staging, &mut extraction_budget).map_err(
+                |error| {
+                    Error::Other(format!(
+                        "could not materialize artifact {} at {}: {error}",
+                        index, artifact.destination
+                    ))
+                },
+            )?;
             check_cancel(cancel)?;
             fs::remove_file(&downloaded).map_err(|source| Error::io(&downloaded, source))?;
         }
@@ -275,8 +286,11 @@ impl Installer {
             .ok_or_else(|| Error::InvalidRecipe("executable has no parent directory".into()))?
             .to_path_buf();
         validate_staged_paths(staging, &executable, &working_directory)?;
-        let snapshot = package_snapshot(staging)?;
         make_executable(&executable)?;
+        if options.source == InstallSource::Curated && recipe.id == "maia3" {
+            personalize_maia_launcher(staging, &executable)?;
+        }
+        let snapshot = package_snapshot(staging)?;
         check_cancel(cancel)?;
         report_progress(
             progress,
@@ -403,6 +417,80 @@ impl Installer {
         }
         Ok(report)
     }
+}
+
+fn personalize_maia_launcher(staging: &Path, executable: &Path) -> Result<()> {
+    let package_root = staging.join("package");
+    let payload = package_payload_snapshot(&package_root, executable)?;
+    let mut review = *PAYLOAD_REVIEW_PLACEHOLDER;
+    let digest_end = PAYLOAD_REVIEW_MARKER_LEN + PAYLOAD_REVIEW_DIGEST_LEN;
+    let files_end = digest_end + PAYLOAD_REVIEW_COUNT_LEN;
+    review[PAYLOAD_REVIEW_MARKER_LEN..digest_end].copy_from_slice(payload.sha256.as_bytes());
+    let file_count = format!(
+        "{:0width$}",
+        payload.file_count,
+        width = PAYLOAD_REVIEW_COUNT_LEN
+    );
+    let byte_count = format!(
+        "{:0width$}",
+        payload.byte_count,
+        width = PAYLOAD_REVIEW_COUNT_LEN
+    );
+    if file_count.len() != PAYLOAD_REVIEW_COUNT_LEN || byte_count.len() != PAYLOAD_REVIEW_COUNT_LEN
+    {
+        return Err(Error::Other(
+            "Maia3 package counts exceed the launcher review fields".into(),
+        ));
+    }
+    review[digest_end..files_end].copy_from_slice(file_count.as_bytes());
+    review[files_end..].copy_from_slice(byte_count.as_bytes());
+
+    let bytes = fs::read(executable).map_err(|source| Error::io(executable, source))?;
+    let matches: Vec<_> = bytes
+        .windows(PAYLOAD_REVIEW_PLACEHOLDER.len())
+        .enumerate()
+        .filter_map(|(offset, value)| (value == PAYLOAD_REVIEW_PLACEHOLDER).then_some(offset))
+        .collect();
+    let [offset] = matches.as_slice() else {
+        return Err(Error::Other(format!(
+            "reviewed Maia3 launcher must contain exactly one unpersonalized payload field; found {}",
+            matches.len()
+        )));
+    };
+    let mut launcher = OpenOptions::new()
+        .write(true)
+        .open(executable)
+        .map_err(|source| Error::io(executable, source))?;
+    launcher
+        .seek(std::io::SeekFrom::Start(*offset as u64))
+        .map_err(|source| Error::io(executable, source))?;
+    launcher
+        .write_all(&review)
+        .map_err(|source| Error::io(executable, source))?;
+    launcher
+        .sync_all()
+        .map_err(|source| Error::io(executable, source))?;
+
+    #[cfg(target_os = "macos")]
+    {
+        let status = Command::new("/usr/bin/codesign")
+            .args(["--force", "--sign", "-", "--timestamp=none"])
+            .arg(executable)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map_err(|source| {
+                Error::Other(format!("could not ad-hoc sign Maia3 launcher: {source}"))
+            })?;
+        if !status.success() {
+            return Err(Error::Other(format!(
+                "could not apply the required local ad-hoc signature to {}",
+                executable.display()
+            )));
+        }
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -629,7 +717,7 @@ mod tests {
     use sha2::{Digest as _, Sha256};
 
     use super::*;
-    use crate::schema::{ArtifactKind, License, Model, Publisher, RECIPE_SCHEMA};
+    use crate::schema::{ArtifactKind, Catalog, License, Model, Publisher, RECIPE_SCHEMA};
 
     struct FixtureDownloader {
         bytes: Vec<u8>,
@@ -655,6 +743,43 @@ mod tests {
                 .map_err(|source| Error::io(destination, source))?;
             file.sync_all()
                 .map_err(|source| Error::io(destination, source))
+        }
+    }
+
+    struct ReviewedDirectoryDownloader {
+        root: std::path::PathBuf,
+    }
+
+    impl Downloader for ReviewedDirectoryDownloader {
+        fn download(
+            &self,
+            artifact: &Artifact,
+            destination: &Path,
+            _cancel: &AtomicBool,
+        ) -> Result<()> {
+            let artifact_name = match artifact.destination.as_str() {
+                "package/launcher" => "launcher",
+                "package/python-runtime" => "python-runtime",
+                "package/maia-source" => "maia3",
+                "package/chess-source" => "chess",
+                value if value.starts_with("package/packages/") => value
+                    .rsplit('/')
+                    .next()
+                    .ok_or_else(|| Error::Other("package artifact has no name".into()))?,
+                value if value.starts_with("package/launcher/models/") => value
+                    .rsplit('/')
+                    .next()
+                    .ok_or_else(|| Error::Other("model artifact has no name".into()))?,
+                value => {
+                    return Err(Error::Other(format!(
+                        "unexpected reviewed artifact destination: {value}"
+                    )));
+                }
+            };
+            let source = self.root.join(artifact_name);
+            fs::copy(&source, destination)
+                .map(|_| ())
+                .map_err(|error| Error::io(&source, error))
         }
     }
 
@@ -864,5 +989,97 @@ mod tests {
             .unwrap_err();
         assert!(error.to_string().contains("explicit approval"));
         assert_eq!(calls.load(Ordering::Relaxed), 0);
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn personalizes_maia_launcher_with_the_exact_payload_snapshot() {
+        let temporary = tempfile::tempdir().unwrap();
+        let package = temporary.path().join("package");
+        let launcher_dir = package.join("launcher");
+        std::fs::create_dir_all(&launcher_dir).unwrap();
+        let launcher = launcher_dir.join("maia3-launcher");
+        let mut launcher_bytes = b"reviewed launcher prefix".to_vec();
+        launcher_bytes.extend_from_slice(PAYLOAD_REVIEW_PLACEHOLDER);
+        launcher_bytes.extend_from_slice(b"reviewed launcher suffix");
+        std::fs::write(&launcher, launcher_bytes).unwrap();
+        std::fs::write(package.join("runtime-file"), b"verified payload").unwrap();
+        let expected = package_payload_snapshot(&package, &launcher).unwrap();
+
+        personalize_maia_launcher(temporary.path(), &launcher).unwrap();
+
+        let bytes = std::fs::read(&launcher).unwrap();
+        assert!(
+            !bytes
+                .windows(PAYLOAD_REVIEW_PLACEHOLDER.len())
+                .any(|value| value == PAYLOAD_REVIEW_PLACEHOLDER)
+        );
+        let marker = &PAYLOAD_REVIEW_PLACEHOLDER[..PAYLOAD_REVIEW_MARKER_LEN];
+        let offset = bytes
+            .windows(marker.len())
+            .position(|value| value == marker)
+            .unwrap();
+        let digest_start = offset + PAYLOAD_REVIEW_MARKER_LEN;
+        let digest_end = digest_start + PAYLOAD_REVIEW_DIGEST_LEN;
+        let files_end = digest_end + PAYLOAD_REVIEW_COUNT_LEN;
+        assert_eq!(&bytes[digest_start..digest_end], expected.sha256.as_bytes());
+        assert_eq!(
+            std::str::from_utf8(&bytes[digest_end..files_end])
+                .unwrap()
+                .parse::<u64>()
+                .unwrap(),
+            expected.file_count
+        );
+        assert_eq!(
+            std::str::from_utf8(&bytes[files_end..files_end + PAYLOAD_REVIEW_COUNT_LEN])
+                .unwrap()
+                .parse::<u64>()
+                .unwrap(),
+            expected.byte_count
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "set the UCI_GRABBER_REAL_MAIA_* variables to reviewed local artifacts"]
+    fn installs_and_validates_the_real_direct_maia_package() {
+        let catalog_path = std::env::var_os("UCI_GRABBER_REAL_MAIA_CATALOG")
+            .map(std::path::PathBuf::from)
+            .expect("UCI_GRABBER_REAL_MAIA_CATALOG is required");
+        let artifacts = std::env::var_os("UCI_GRABBER_REAL_MAIA_ARTIFACTS")
+            .map(std::path::PathBuf::from)
+            .expect("UCI_GRABBER_REAL_MAIA_ARTIFACTS is required");
+        let output = std::env::var_os("UCI_GRABBER_REAL_MAIA_OUTPUT")
+            .map(std::path::PathBuf::from)
+            .expect("UCI_GRABBER_REAL_MAIA_OUTPUT is required");
+        assert!(!output.exists(), "real Maia output must not already exist");
+        let catalog = Catalog::from_json(&fs::read(&catalog_path).unwrap()).unwrap();
+        let recipe = catalog
+            .recipes
+            .iter()
+            .find(|recipe| recipe.id == "maia3")
+            .expect("review catalog has no Maia3 recipe");
+        let platform = current_platform().unwrap().to_owned();
+        let installer = Installer::new(
+            RegistryStore::new(&output),
+            Arc::new(ReviewedDirectoryDownloader { root: artifacts }),
+        );
+        let record = installer
+            .install(
+                recipe,
+                "maia3-5m",
+                &InstallOptions {
+                    source: InstallSource::Curated,
+                    platform: Some(platform),
+                    ..InstallOptions::default()
+                },
+                &AtomicBool::new(false),
+            )
+            .unwrap();
+        assert_eq!(
+            RegistryStore::integrity(&record).unwrap(),
+            Integrity::Verified
+        );
+        println!("real Maia executable: {}", record.executable.display());
     }
 }

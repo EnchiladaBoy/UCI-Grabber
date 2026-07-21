@@ -64,17 +64,20 @@ impl GrabberApp {
         let installer = Installer::default_store()?;
         let recovery = installer.recover()?;
         let catalog_client = default_client(CatalogCache::new(store.cache_dir()))?;
-        let (catalog, mut status, refresh_on_launch) = match catalog_client.cached() {
-            Ok(Some(catalog)) => (catalog, "Loaded verified catalog cache.".to_owned(), false),
+        let (catalog, mut status) = match catalog_client.cached() {
+            Ok(Some(catalog)) => (
+                catalog,
+                "Loaded this release's verified catalog.".to_owned(),
+            ),
             Ok(None) => (
                 bundled_catalog()?,
-                "No verified catalog cache yet.".to_owned(),
-                true,
+                "Loaded this release's bundled catalog.".to_owned(),
             ),
             Err(error) => (
                 bundled_catalog()?,
-                format!("Ignored invalid catalog cache: {error}"),
-                true,
+                format!(
+                    "Ignored an invalid old catalog cache and loaded this release's bundled catalog: {error}"
+                ),
             ),
         };
         if recovery.cleaned_staging > 0 || recovery.repaired_records > 0 {
@@ -98,7 +101,7 @@ impl GrabberApp {
         let custom_recipes = custom_store.load_all()?;
         let installs = store.load()?.installs;
         let integrity = integrity_labels(&installs);
-        let mut app = Self {
+        Ok(Self {
             installer,
             catalog_client,
             catalog,
@@ -118,13 +121,7 @@ impl GrabberApp {
             install_progress: None,
             catalog_refreshing: false,
             post_install_action: PostInstallAction::ShowReady,
-        };
-        if refresh_on_launch {
-            let launch_status = app.status.clone();
-            app.start_refresh();
-            app.status = format!("{launch_status} Downloading the latest signed catalog…");
-        }
-        Ok(app)
+        })
     }
 
     fn reload_installs(&mut self) {
@@ -197,10 +194,10 @@ impl GrabberApp {
             let _ = sender.send(JobResult::Refreshed(client.refresh()));
         });
         self.job = Some(receiver);
-        self.job_label = Some("Refreshing signed catalog…".into());
+        self.job_label = Some("Verifying release catalog…".into());
         self.job_cancel = None;
         self.catalog_refreshing = true;
-        self.status = "Refreshing signed catalog…".into();
+        self.status = "Downloading and verifying this release's catalog…".into();
     }
 
     fn start_import(&mut self, source: String) {
@@ -262,11 +259,11 @@ impl GrabberApp {
                 self.catalog_refreshing = false;
                 let count = catalog.catalog.recipes.len();
                 self.catalog = catalog;
-                self.status = format!("Verified catalog refreshed ({count} recipes).");
+                self.status = format!("Verified this release's catalog ({count} recipes).");
             }
             JobResult::Refreshed(Err(error)) => {
                 self.catalog_refreshing = false;
-                self.status = format!("Catalog refresh failed; kept previous catalog: {error}");
+                self.status = format!("Catalog verification failed; kept bundled catalog: {error}");
             }
             JobResult::Imported(Ok(recipe)) => {
                 self.approved_unreviewed
@@ -485,26 +482,31 @@ impl GrabberApp {
     }
 
     fn catalog_ui(&mut self, ui: &mut egui::Ui) {
+        let has_curated_recipes = !self.catalog.catalog.recipes.is_empty();
         ui.horizontal(|ui| {
             ui.heading("Curated engines");
-            if ui
-                .add_enabled(self.job.is_none(), egui::Button::new("Refresh catalog"))
-                .clicked()
+            if has_curated_recipes
+                && ui
+                    .add_enabled(
+                        self.job.is_none(),
+                        egui::Button::new("Verify release catalog"),
+                    )
+                    .clicked()
             {
                 self.start_refresh();
             }
         });
-        ui.label("Catalog entries are authenticated with a bundled Ed25519 public key. Every package is checksum-verified and tested as UCI before activation.");
+        ui.label("This app release embeds an immutable catalog and one-time Ed25519 verification key. Every package is checksum-verified and tested as UCI before activation.");
         ui.add_space(10.0);
         let recipes = self.catalog.catalog.recipes.clone();
         if recipes.is_empty() {
             if self.catalog_refreshing {
                 ui.horizontal(|ui| {
                     ui.spinner();
-                    ui.label("Loading and verifying the latest curated catalogue…");
+                    ui.label("Downloading and verifying this release's curated catalogue…");
                 });
             } else {
-                ui.label("No curated engines are published in this signed catalog yet. You can import a data-only recipe in Custom Recipes.");
+                ui.label("This build carries only the empty source bootstrap catalog. Verifying it cannot add production recipes; use a packaged UCI Grabber release for the curated catalog, or import a data-only recipe in Custom Recipes.");
             }
         } else {
             self.recipe_list(ui, &recipes, InstallSource::Curated);
@@ -585,7 +587,7 @@ impl GrabberApp {
                         self.status = "Engine path copied for use in any chess GUI.".into();
                     }
                     if ui.button("Open package folder").clicked() {
-                        match handoff::reveal(&record.executable) {
+                        match handoff::reveal(&record.generation_root) {
                             Ok(_) => self.status = "Opened the portable UCI package folder.".into(),
                             Err(error) => {
                                 self.status = format!("Could not open package folder: {error}");
@@ -629,7 +631,7 @@ impl GrabberApp {
                         self.status = "Engine path copied for use in any chess GUI.".into();
                     }
                     if ui.button("Open package folder").clicked() {
-                        match handoff::reveal(&record.executable) {
+                        match handoff::reveal(&record.generation_root) {
                             Ok(_) => self.status = "Opened the portable UCI package folder.".into(),
                             Err(error) => {
                                 self.status = format!("Could not open package folder: {error}");

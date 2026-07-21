@@ -67,15 +67,27 @@ pub fn reveal(path: &Path) -> Result<Child> {
         return Err(Error::MissingInstall(path.to_path_buf()));
     }
     #[cfg(target_os = "windows")]
-    let child = Command::new("explorer.exe")
-        .arg("/select,")
-        .arg(path)
-        .spawn();
+    let child = if path.is_dir() {
+        Command::new("explorer.exe").arg(path).spawn()
+    } else {
+        Command::new("explorer.exe")
+            .arg("/select,")
+            .arg(path)
+            .spawn()
+    };
     #[cfg(target_os = "macos")]
-    let child = Command::new("open").arg("-R").arg(path).spawn();
+    let child = if path.is_dir() {
+        Command::new("open").arg(path).spawn()
+    } else {
+        Command::new("open").arg("-R").arg(path).spawn()
+    };
     #[cfg(all(unix, not(target_os = "macos")))]
     let child = Command::new("xdg-open")
-        .arg(path.parent().unwrap_or(path))
+        .arg(if path.is_dir() {
+            path
+        } else {
+            path.parent().unwrap_or(path)
+        })
         .spawn();
     child.map_err(|source| Error::Other(format!("could not reveal {}: {source}", path.display())))
 }

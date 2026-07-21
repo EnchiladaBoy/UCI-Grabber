@@ -74,8 +74,10 @@ jobs:
           test "$(git -C "$probe" hash-object --no-filters \
             packaging/maia3/component-metadata.json)" = \
             "$(git rev-parse HEAD:packaging/maia3/component-metadata.json)"
-          test "$(python3 "$probe/packaging/maia3/review_digest.py" source)" = \
-            "$(python3 packaging/maia3/review_digest.py source)"
+          test "$(python3 "$probe/packaging/maia3/review_digest.py" inputs)" = \
+            "$(python3 packaging/maia3/review_digest.py inputs)"
+          python3 "$probe/packaging/maia3/review_digest.py" \
+            verify-release --tag v0.2.0
       - name: Check Rust formatting
         run: cargo fmt --all --check
       - name: Lint all targets and features

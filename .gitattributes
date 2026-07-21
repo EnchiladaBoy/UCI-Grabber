@@ -1,15 +1,42 @@
 # Keep the signed catalog and its key material byte-stable on every platform.
+/.gitattributes text eol=lf
 /catalog/catalog.json text eol=lf
 /catalog/catalog.pub text eol=lf
 /catalog/catalog-public-key.pem text eol=lf
 /catalog/catalog.sig binary
+/catalog/generate_catalog.py text eol=lf
+/Cargo.lock text eol=lf
+/Cargo.toml text eol=lf
+/LICENSE text eol=lf
+/README.md text eol=lf
+/catalog/schema/*.json text eol=lf
+/catalog/validate_catalog.py text eol=lf
+/catalog/verify_catalog.py text eol=lf
 
 # Review gates hash these exact worktree bytes. Keep their digests portable
 # between maintainer checkouts and the Linux release runner.
+/packaging/app/*.py text eol=lf
+/packaging/licenses/*.hbs text eol=lf
+/packaging/licenses/*.toml text eol=lf
 /packaging/maia3/*.py text eol=lf
 /packaging/maia3/*.json text eol=lf
 /packaging/maia3/*.md text eol=lf
-/packaging/maia3/*.spec text eol=lf
 /packaging/maia3/*.txt text eol=lf
-/.github/workflows/maia-wheelhouse-review.yml text eol=lf
+/packaging/maia3/smoke_fake_python.rs text eol=lf
+/packaging/verify_macos_deployment.py text eol=lf
 /.github/workflows/release.yml text eol=lf
+/src/app.rs text eol=lf
+/src/bin/uci-grabber-gui.rs text eol=lf
+/src/bin/uci-grabber-maia3-launcher.rs text eol=lf
+/src/catalog.rs text eol=lf
+/src/download.rs text eol=lf
+/src/error.rs text eol=lf
+/src/extract.rs text eol=lf
+/src/handoff.rs text eol=lf
+/src/install.rs text eol=lf
+/src/lib.rs text eol=lf
+/src/main.rs text eol=lf
+/src/recipes.rs text eol=lf
+/src/registry.rs text eol=lf
+/src/schema.rs text eol=lf
+/src/uci.rs text eol=lf

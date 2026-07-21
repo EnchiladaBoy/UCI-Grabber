@@ -1,42 +1,41 @@
 {
   "schema": 1,
   "publication": {
-    "default": "excluded_pending_checkpoint_download_use_redistribution_review",
-    "gate_environment": "MAIA3_MODEL_LICENSE_REVIEW",
-    "gate_value": "sha256(component-metadata.json)"
+    "default": "excluded_unless_checked_release_review_verifies",
+    "gate_file": "release-review.json",
+    "gate_value": "exact tag, this file's SHA-256, direct-retrieval decision, and pinned checkpoint facts"
   },
   "component": {
     "version": "0.1.0-uci-grabber.1",
     "minimum_fisheye_version": "1.8.0",
     "upstream_repository": "https://github.com/CSSLab/maia3",
     "upstream_commit": "1e13597c42d4858b7cfd7cfdae01e297263364b2",
-    "corresponding_source_asset": "maia3-corresponding-source.tar.gz",
-    "notices_asset": "MAIA3-NOTICES.txt"
+    "notices_asset": "MAIA3-DIRECT-DOWNLOAD-NOTICES.txt"
   },
   "runtimes": {
     "windows-x86_64": {
-      "asset": "uci-grabber-maia3-runtime-windows-x86_64.zip",
+      "asset": "uci-grabber-maia3-launcher-windows-x86_64.zip",
       "archive": "zip",
-      "executable_template": "maia3-runtime/{model}.exe",
-      "model_destination_template": "maia3-runtime/models/{model}.pt"
+      "executable_template": "maia3-launcher.exe",
+      "model_destination_template": "models/{model}.pt"
     },
     "macos-aarch64": {
-      "asset": "uci-grabber-maia3-runtime-macos-aarch64.tar.zst",
-      "archive": "tar.zst",
-      "executable_template": "maia3-runtime/UCI-Grabber-Maia3.app/Contents/MacOS/{model}",
-      "model_destination_template": "maia3-runtime/models/{model}.pt"
+      "asset": "uci-grabber-maia3-launcher-macos-aarch64.tar.gz",
+      "archive": "tar.gz",
+      "executable_template": "maia3-launcher",
+      "model_destination_template": "models/{model}.pt"
     },
     "linux-x86_64": {
-      "asset": "uci-grabber-maia3-runtime-linux-x86_64.tar.zst",
-      "archive": "tar.zst",
-      "executable_template": "maia3-runtime/{model}",
-      "model_destination_template": "maia3-runtime/models/{model}.pt"
+      "asset": "uci-grabber-maia3-launcher-linux-x86_64.tar.gz",
+      "archive": "tar.gz",
+      "executable_template": "maia3-launcher",
+      "model_destination_template": "models/{model}.pt"
     },
     "linux-aarch64": {
-      "asset": "uci-grabber-maia3-runtime-linux-aarch64.tar.zst",
-      "archive": "tar.zst",
-      "executable_template": "maia3-runtime/{model}",
-      "model_destination_template": "maia3-runtime/models/{model}.pt"
+      "asset": "uci-grabber-maia3-launcher-linux-aarch64.tar.gz",
+      "archive": "tar.gz",
+      "executable_template": "maia3-launcher",
+      "model_destination_template": "models/{model}.pt"
     }
   },
   "models": {

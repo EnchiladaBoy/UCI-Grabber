@@ -22,6 +22,10 @@ rules are:
 - One platform package may declare at most 2 GiB across all downloaded artifacts.
   Extraction separately enforces a generation-wide 2 GiB output limit, 40,000
   filesystem-entry limit, and 1 GiB limit for an individual output file.
+- Archive links are never preserved. A relative link may be flattened to a
+  regular file only when its complete target chain stays inside that archive and
+  ends at a regular file. Absolute, escaping, unresolved, cyclic, directory, and
+  special-file links are rejected.
 - The executable takes no command-line arguments and must pass `uci`,
   `isready`, a legal depth-one search from the starting position, and `quit`.
 

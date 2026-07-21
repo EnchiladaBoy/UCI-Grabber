@@ -1,0 +1,57 @@
+{
+  "schema": 2,
+  "release_tag": "v0.2.0",
+  "component_metadata": {
+    "path": "packaging/maia3/component-metadata.json",
+    "sha256": "71f94b28a524866f983efee1feb4d4296f766a6f95e27e626ba19a5c96042a31"
+  },
+  "direct_downloads": {
+    "path": "packaging/maia3/direct-downloads.json",
+    "sha256": "bf4dd026518d45fd31b782fc85aa45568a21c9e2005a8ca88cf9ca945254f715"
+  },
+  "checkpoint_distribution_review": {
+    "decision": "approved_direct_user_retrieval_only",
+    "delivery": "end_user_download_from_pinned_hugging_face_revision",
+    "github_release_distributes_checkpoints": false,
+    "upstream_facts": {
+      "maia3-5m": {
+        "model_card_statement": "CC BY 4.0 applies to the paper; see the Maia3 repository for the code and weights license",
+        "independent_license_file": false
+      },
+      "maia3-23m": {
+        "model_card_statement": "CC BY 4.0 applies to the paper; see the Maia3 repository for the code and weights license",
+        "independent_license_file": false
+      },
+      "maia3-79m": {
+        "model_card_statement": "AGPLv3"
+      },
+      "maia3-code": {
+        "repository": "https://github.com/CSSLab/maia3",
+        "license_statement": "AGPL-3.0"
+      }
+    },
+    "relicenses_upstream_material": false
+  },
+  "direct_retrieval_review": {
+    "decision": "approved_direct_user_retrieval_and_local_assembly",
+    "github_release_distributes": {
+      "maia3_code": false,
+      "cpython": false,
+      "python_dependencies": false,
+      "maia_checkpoints": false
+    },
+    "github_release_maia_assets": [
+      "MAIA3-DIRECT-DOWNLOAD-NOTICES.txt",
+      "uci-grabber-maia3-launcher-linux-aarch64.tar.gz",
+      "uci-grabber-maia3-launcher-linux-x86_64.tar.gz",
+      "uci-grabber-maia3-launcher-macos-aarch64.tar.gz",
+      "uci-grabber-maia3-launcher-windows-x86_64.zip"
+    ],
+    "retrieval": "user_initiated_from_immutable_upstream_urls",
+    "assembly": "private_local_portable_package",
+    "launcher_relationship": "apache_2_0_process_launcher_invokes_local_python",
+    "repackages_upstream_material": false,
+    "not_legal_advice": true
+  },
+  "release_inputs_sha256": "b1661afa00609c43e8a004ea678ca34da6d271cef8f63e7f46b7f3f3a721f949"
+}

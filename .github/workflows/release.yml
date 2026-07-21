@@ -1,4 +1,4 @@
-name: Release catalog and Maia3 component
+name: Release portable UCI Grabber
 
 on:
   push:
@@ -9,14 +9,9 @@ on:
         description: Existing stable vMAJOR.MINOR.PATCH tag to package
         required: true
         type: string
-      require_maia3:
-        description: Fail unless the reviewed Maia3 catalog and all four runtimes can be built
-        required: true
-        default: true
-        type: boolean
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: uci-grabber-release
@@ -24,80 +19,55 @@ concurrency:
 
 jobs:
   gate:
-    name: Validate tag and Maia3 review gate
+    name: Validate tag and checked-in Maia3 release review
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.metadata.outputs.tag }}
+      version: ${{ steps.metadata.outputs.version }}
       maia_enabled: ${{ steps.metadata.outputs.maia_enabled }}
       metadata_digest: ${{ steps.metadata.outputs.metadata_digest }}
-      source_review_digest: ${{ steps.metadata.outputs.source_review_digest }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
+          persist-credentials: false
       - id: metadata
         name: Resolve immutable release inputs
         shell: bash
         env:
           REQUESTED_TAG: ${{ inputs.tag || github.ref_name }}
-          DISPATCH_REQUIRE_MAIA3: ${{ inputs.require_maia3 && 'true' || 'false' }}
-          MODEL_LICENSE_REVIEW: ${{ vars.MAIA3_MODEL_LICENSE_REVIEW }}
-          CORRESPONDING_SOURCE_REVIEW: ${{ vars.MAIA3_CORRESPONDING_SOURCE_REVIEW }}
-          WHEELHOUSE_WINDOWS_REVIEW: ${{ vars.MAIA3_WHEELHOUSE_REVIEW_WINDOWS_X86_64 }}
-          WHEELHOUSE_MACOS_REVIEW: ${{ vars.MAIA3_WHEELHOUSE_REVIEW_MACOS_AARCH64 }}
-          WHEELHOUSE_LINUX_X86_REVIEW: ${{ vars.MAIA3_WHEELHOUSE_REVIEW_LINUX_X86_64 }}
-          WHEELHOUSE_LINUX_ARM_REVIEW: ${{ vars.MAIA3_WHEELHOUSE_REVIEW_LINUX_AARCH64 }}
+          EVENT_NAME: ${{ github.event_name }}
+          DISPATCH_REF_TYPE: ${{ github.ref_type }}
+          DISPATCH_REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           [[ "$REQUESTED_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
             echo 'Release tag must use vMAJOR.MINOR.PATCH.' >&2
             exit 1
           }
+          if test "$EVENT_NAME" = workflow_dispatch; then
+            test "$DISPATCH_REF_TYPE" = tag || {
+              echo 'Manual release dispatch must run from the requested tag, not a branch.' >&2
+              exit 1
+            }
+            test "$DISPATCH_REF_NAME" = "$REQUESTED_TAG" || {
+              echo 'Manual release dispatch ref and requested tag must match exactly.' >&2
+              exit 1
+            }
+          fi
           version="${REQUESTED_TAG#v}"
           manifest_version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n1)"
           test "$version" = "$manifest_version" || {
             echo "Tag $REQUESTED_TAG does not match Cargo version $manifest_version." >&2
             exit 1
           }
-          IFS=. read -r major minor patch <<< "$version"
-          major=$((10#$major))
-          minor=$((10#$minor))
-          patch=$((10#$patch))
-          maia_required="$DISPATCH_REQUIRE_MAIA3"
-          if (( major > 0 || minor > 1 || (minor == 1 && patch >= 1) )); then
-            maia_required=true
-          fi
-          digest="$(sha256sum packaging/maia3/component-metadata.json | awk '{print $1}')"
-          wheelhouse_arguments=(
-            --wheelhouse "windows-x86_64=${WHEELHOUSE_WINDOWS_REVIEW:-}"
-            --wheelhouse "macos-aarch64=${WHEELHOUSE_MACOS_REVIEW:-}"
-            --wheelhouse "linux-x86_64=${WHEELHOUSE_LINUX_X86_REVIEW:-}"
-            --wheelhouse "linux-aarch64=${WHEELHOUSE_LINUX_ARM_REVIEW:-}"
-          )
-          if test -z "${MODEL_LICENSE_REVIEW:-}"; then
-            if test "$maia_required" = true; then
-              echo 'This release requires Maia3, but MAIA3_MODEL_LICENSE_REVIEW is absent.' >&2
-              exit 1
-            fi
-            enabled=false
-            source_digest="$(python3 packaging/maia3/review_digest.py source)"
-            echo 'Maia3 remains excluded: checkpoint terms review digest is absent.'
-          elif test "$MODEL_LICENSE_REVIEW" != "$digest"; then
-            echo 'MAIA3_MODEL_LICENSE_REVIEW is stale; refusing to publish an empty fallback.' >&2
-            exit 1
-          else
-            source_digest="$(python3 packaging/maia3/review_digest.py \
-              source-release "${wheelhouse_arguments[@]}")"
-            python3 packaging/maia3/review_digest.py verify-source \
-              --expected "${CORRESPONDING_SOURCE_REVIEW:-}" \
-              "${wheelhouse_arguments[@]}"
-            enabled=true
-          fi
+          python3 packaging/maia3/review_digest.py verify-release --tag "$REQUESTED_TAG"
+          metadata_digest="$(sha256sum packaging/maia3/component-metadata.json | awk '{print $1}')"
           {
             echo "tag=$REQUESTED_TAG"
-            echo "maia_enabled=$enabled"
-            echo "metadata_digest=$digest"
-            echo "source_review_digest=$source_digest"
+            echo "version=$version"
+            echo 'maia_enabled=true'
+            echo "metadata_digest=$metadata_digest"
           } >> "$GITHUB_OUTPUT"
       - name: Validate release-side source
         run: |
@@ -117,7 +87,8 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          ref: ${{ needs.gate.outputs.tag }}
+          ref: refs/tags/${{ needs.gate.outputs.tag }}
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
           toolchain: "1.92.0"
@@ -141,9 +112,337 @@ jobs:
           if-no-files-found: error
           overwrite: true
 
+  launcher_build:
+    name: Maia3 direct-download launcher · ${{ matrix.platform }}
+    needs: [gate, licenses]
+    if: needs.gate.outputs.maia_enabled == 'true'
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows-x86_64
+            binary: uci-grabber-maia3-launcher.exe
+            asset: uci-grabber-maia3-launcher-windows-x86_64.zip
+          - os: macos-15
+            platform: macos-aarch64
+            binary: uci-grabber-maia3-launcher
+            asset: uci-grabber-maia3-launcher-macos-aarch64.tar.gz
+          - os: ubuntu-22.04
+            platform: linux-x86_64
+            binary: uci-grabber-maia3-launcher
+            asset: uci-grabber-maia3-launcher-linux-x86_64.tar.gz
+          - os: ubuntu-22.04-arm
+            platform: linux-aarch64
+            binary: uci-grabber-maia3-launcher
+            asset: uci-grabber-maia3-launcher-linux-aarch64.tar.gz
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: refs/tags/${{ needs.gate.outputs.tag }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: "1.92.0"
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: application-third-party-licenses
+          path: release-inputs/licenses
+      - name: Install Linux Rust build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update
+          sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y \
+            binutils \
+            libdbus-1-dev \
+            libegl1-mesa-dev \
+            libgbm-dev \
+            libwayland-dev \
+            libx11-dev \
+            libxcb1-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            libxrandr-dev \
+            pkg-config
+      - name: Build and smoke the Maia3 process launcher
+        shell: bash
+        env:
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.platform == 'macos-aarch64' && '12.3' || '' }}
+        run: |
+          set -euo pipefail
+          cargo build --release --locked --bin uci-grabber-maia3-launcher
+          test -s 'target/release/${{ matrix.binary }}'
+          if 'target/release/${{ matrix.binary }}' --help \
+            2> "$RUNNER_TEMP/launcher-arguments.stderr"; then
+            echo 'Maia3 launcher unexpectedly accepted a command-line argument.' >&2
+            exit 1
+          fi
+          grep -F \
+            'the packaged Maia3 launcher does not accept arguments' \
+            "$RUNNER_TEMP/launcher-arguments.stderr"
+      - name: Exercise personalized launcher integrity and cancellation
+        shell: bash
+        run: |
+          set -euo pipefail
+          fake_python="$RUNNER_TEMP/maia3-smoke-python"
+          if test '${{ runner.os }}' = Windows; then
+            fake_python="$fake_python.exe"
+          fi
+          rustc packaging/maia3/smoke_fake_python.rs -o "$fake_python"
+          python packaging/maia3/smoke_personalized_launcher.py \
+            --platform '${{ matrix.platform }}' \
+            --launcher 'target/release/${{ matrix.binary }}' \
+            --fake-python "$fake_python" \
+            --work "$RUNNER_TEMP/maia3-personalized-smoke"
+      - name: Verify Linux ELF architecture, glibc floor, and linkage
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          BINARY: target/release/${{ matrix.binary }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          source /etc/os-release
+          test "$ID" = ubuntu
+          test "$VERSION_ID" = 22.04
+          test "$VERSION_CODENAME" = jammy
+
+          case "$PLATFORM" in
+            linux-x86_64)
+              expected_runner=x86_64
+              expected_machine='Advanced Micro Devices X86-64'
+              ;;
+            linux-aarch64)
+              expected_runner=aarch64
+              expected_machine=AArch64
+              ;;
+            *)
+              echo "unexpected Linux platform: $PLATFORM" >&2
+              exit 1
+              ;;
+          esac
+          test "$(uname -m)" = "$expected_runner"
+          test -x "$BINARY"
+
+          elf_header="$(readelf --file-header "$BINARY")"
+          printf '%s\n' "$elf_header"
+          elf_class="$(sed -n 's/^[[:space:]]*Class:[[:space:]]*//p' <<< "$elf_header")"
+          elf_machine="$(sed -n 's/^[[:space:]]*Machine:[[:space:]]*//p' <<< "$elf_header")"
+          test "$elf_class" = ELF64
+          test "$elf_machine" = "$expected_machine"
+
+          glibc_versions="$(
+            readelf --version-info "$BINARY" \
+              | sed -nE 's/.*Name: GLIBC_([0-9]+([.][0-9]+)+).*/\1/p' \
+              | sort -Vu
+          )"
+          test -n "$glibc_versions"
+          printf 'Required glibc versions:\n%s\n' "$glibc_versions"
+          maximum_glibc="$(tail -n 1 <<< "$glibc_versions")"
+          if dpkg --compare-versions "$maximum_glibc" gt 2.35; then
+            echo "binary requires glibc $maximum_glibc, newer than the 2.35 release ceiling" >&2
+            exit 1
+          fi
+
+          ldd_output="$(ldd "$BINARY" 2>&1)"
+          printf '%s\n' "$ldd_output"
+          if grep -Fq 'not found' <<< "$ldd_output"; then
+            echo 'binary has an unresolved shared-library dependency' >&2
+            exit 1
+          fi
+      - name: Verify the macOS launcher deployment floor
+        if: runner.os == 'macOS'
+        run: python packaging/verify_macos_deployment.py 'target/release/${{ matrix.binary }}' --maximum 12.3
+      - name: Package the direct-download launcher
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir release-assets
+          python packaging/maia3/package_launcher.py \
+            --platform '${{ matrix.platform }}' \
+            --binary 'target/release/${{ matrix.binary }}' \
+            --entry packaging/maia3/maia3_entry.py \
+            --license LICENSE \
+            --notices packaging/maia3/DIRECT-DOWNLOAD-NOTICES.txt \
+            --third-party release-inputs/licenses/THIRD-PARTY-LICENSES.txt \
+            --output 'release-assets/${{ matrix.asset }}'
+          test -s 'release-assets/${{ matrix.asset }}'
+          ASSET='release-assets/${{ matrix.asset }}' \
+            PLATFORM='${{ matrix.platform }}' python - <<'PY'
+          import os
+          import tarfile
+          import zipfile
+          from pathlib import Path
+
+          asset = Path(os.environ["ASSET"])
+          executable = (
+              "maia3-launcher.exe"
+              if os.environ["PLATFORM"] == "windows-x86_64"
+              else "maia3-launcher"
+          )
+          expected = {
+              executable,
+              "maia3_entry.py",
+              "LICENSE",
+              "DIRECT-DOWNLOAD-NOTICES.txt",
+              "THIRD-PARTY-LICENSES.txt",
+          }
+          if asset.suffix == ".zip":
+              with zipfile.ZipFile(asset) as archive:
+                  members = archive.infolist()
+                  names = {member.filename for member in members if not member.is_dir()}
+                  if names != expected or len(members) != len(expected):
+                      raise SystemExit(f"unexpected launcher ZIP entries: {sorted(names)}")
+          else:
+              with tarfile.open(asset, "r:gz") as archive:
+                  members = archive.getmembers()
+                  names = {member.name for member in members if member.isfile()}
+                  if names != expected or len(members) != len(expected):
+                      raise SystemExit(f"unexpected launcher tar entries: {sorted(names)}")
+          PY
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: component-maia3-launcher-${{ matrix.platform }}
+          path: release-assets/*
+          if-no-files-found: error
+          overwrite: true
+
+  catalog_components:
+    name: Generate signed direct-download catalog
+    needs: [gate, launcher_build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: refs/tags/${{ needs.gate.outputs.tag }}
+          persist-credentials: false
+      - name: Download all direct-download launcher assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: component-maia3-*
+          path: dist
+          merge-multiple: true
+      - name: Stage backward-compatible bootstrap catalog and schemas
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp \
+            packaging/maia3/DIRECT-DOWNLOAD-NOTICES.txt \
+            dist/MAIA3-DIRECT-DOWNLOAD-NOTICES.txt
+          cp catalog/catalog.json dist/catalog.json
+          cp catalog/catalog.sig dist/catalog.sig
+          cp catalog/catalog.pub dist/catalog.pub
+          cp catalog/schema/recipe-v1.schema.json dist/recipe-v1.schema.json
+          cp catalog/schema/catalog-v1.schema.json dist/catalog-v1.schema.json
+          python3 catalog/verify_catalog.py \
+            --catalog dist/catalog.json \
+            --signature dist/catalog.sig \
+            --public-key catalog/catalog-public-key.pem \
+            --bootstrap
+      - name: Generate deterministic populated Maia3 catalog
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.gate.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.gate.outputs.version }}
+          REVIEW_DIGEST: ${{ needs.gate.outputs.metadata_digest }}
+        run: |
+          set -euo pipefail
+          epoch="$(git show -s --format=%ct HEAD)"
+          generated="$(date -u -d "@$epoch" +'%Y-%m-%dT%H:%M:%SZ')"
+          python3 catalog/generate_catalog.py \
+            --assets-dir dist \
+            --repository "$GITHUB_REPOSITORY" \
+            --tag "$RELEASE_TAG" \
+            --generated-at "$generated" \
+            --expires-at '9999-12-31T23:59:59Z' \
+            --output "dist/catalog-v$RELEASE_VERSION.json" \
+            --include-maia3 \
+            --maia3-license-review-digest "$REVIEW_DIGEST"
+          CATALOG="dist/catalog-v$RELEASE_VERSION.json" python3 -c \
+            'import json, os, pathlib, sys; data=json.loads(pathlib.Path(os.environ["CATALOG"]).read_text()); ids=[recipe["id"] for recipe in data["recipes"]]; ids == ["maia3"] or sys.exit("release catalog is empty or unexpected")'
+      - name: Generate a one-time catalog integrity key, sign, and discard it
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.gate.outputs.version }}
+        run: |
+          set -euo pipefail
+          private_key="$RUNNER_TEMP/catalog-one-time-private.pem"
+          public_pem="dist/catalog-v$RELEASE_VERSION-public-key.pem"
+          public_raw="dist/catalog-v$RELEASE_VERSION.pub"
+          catalog="dist/catalog-v$RELEASE_VERSION.json"
+          signature="dist/catalog-v$RELEASE_VERSION.sig"
+          trap 'rm -f "$private_key"' EXIT
+          openssl genpkey -algorithm Ed25519 -out "$private_key"
+          chmod 600 "$private_key"
+          openssl pkey -in "$private_key" -pubout -out "$public_pem"
+          raw_hex="$(openssl pkey -pubin -in "$public_pem" -outform DER \
+            | tail -c 32 \
+            | od -An -vtx1 \
+            | tr -d ' \n')"
+          test "${#raw_hex}" = 64
+          printf '%s\n' "$raw_hex" > "$public_raw"
+          openssl pkeyutl -sign -rawin \
+            -inkey "$private_key" \
+            -in "$catalog" \
+            -out "$signature"
+          test "$(wc -c < "$signature")" = 64
+          python3 catalog/verify_catalog.py \
+            --catalog "$catalog" \
+            --signature "$signature" \
+            --public-key "$public_pem"
+          derived="$(openssl pkey -pubin -in "$public_pem" -outform DER \
+            | tail -c 32 \
+            | od -An -vtx1 \
+            | tr -d ' \n')"
+          test "$derived" = "$(tr -d ' \r\n' < "$public_raw")"
+          rm -f "$private_key"
+          trap - EXIT
+      - name: Verify the complete catalog/component payload
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.gate.outputs.version }}
+        run: |
+          set -euo pipefail
+          expected=(
+            MAIA3-DIRECT-DOWNLOAD-NOTICES.txt
+            catalog-v$RELEASE_VERSION-public-key.pem
+            catalog-v$RELEASE_VERSION.json
+            catalog-v$RELEASE_VERSION.pub
+            catalog-v$RELEASE_VERSION.sig
+            catalog-v1.schema.json
+            catalog.json
+            catalog.pub
+            catalog.sig
+            recipe-v1.schema.json
+            uci-grabber-maia3-launcher-linux-aarch64.tar.gz
+            uci-grabber-maia3-launcher-linux-x86_64.tar.gz
+            uci-grabber-maia3-launcher-macos-aarch64.tar.gz
+            uci-grabber-maia3-launcher-windows-x86_64.zip
+          )
+          for file in "${expected[@]}"; do
+            test -s "dist/$file"
+          done
+          test "$(find dist -maxdepth 1 -type f | wc -l)" = "${#expected[@]}"
+          python3 catalog/verify_catalog.py \
+            --catalog "dist/catalog-v$RELEASE_VERSION.json" \
+            --signature "dist/catalog-v$RELEASE_VERSION.sig" \
+            --public-key "dist/catalog-v$RELEASE_VERSION-public-key.pem"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: UCI-Grabber-catalog-and-components
+          path: dist/*
+          if-no-files-found: error
+          overwrite: true
+
   app_build:
     name: UCI Grabber application · ${{ matrix.platform }}
-    needs: [gate, licenses]
+    needs: [gate, licenses, catalog_components]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:
@@ -160,12 +459,12 @@ jobs:
             binary: uci-grabber
             gui_binary: ""
             asset: UCI-Grabber-macos-aarch64.app.zip
-          - os: ubuntu-24.04
+          - os: ubuntu-22.04
             platform: linux-x86_64
             binary: uci-grabber
             gui_binary: ""
             asset: uci-grabber-linux-x86_64.tar.gz
-          - os: ubuntu-24.04-arm
+          - os: ubuntu-22.04-arm
             platform: linux-aarch64
             binary: uci-grabber
             gui_binary: ""
@@ -173,18 +472,27 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          ref: ${{ needs.gate.outputs.tag }}
+          ref: refs/tags/${{ needs.gate.outputs.tag }}
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
           toolchain: "1.92.0"
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: "3.12"
+      - name: Install OpenSSL 3 for catalog verification on macOS
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install openssl@3
+          echo "$(brew --prefix openssl@3)/bin" >> "$GITHUB_PATH"
       - name: Install Linux GUI build dependencies
         if: runner.os == 'Linux'
         run: |
           sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update
           sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y \
+            binutils \
             libdbus-1-dev \
             libegl1-mesa-dev \
             libgbm-dev \
@@ -198,7 +506,32 @@ jobs:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: application-third-party-licenses
-          path: release-inputs
+          path: release-inputs/licenses
+      - name: Download the generated catalog and component artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: UCI-Grabber-catalog-and-components
+          path: release-inputs/catalog-components
+      - name: Embed and verify the populated release catalog
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.gate.outputs.version }}
+        run: |
+          set -euo pipefail
+          source=release-inputs/catalog-components
+          cp "$source/catalog-v$RELEASE_VERSION.json" catalog/catalog.json
+          cp "$source/catalog-v$RELEASE_VERSION.sig" catalog/catalog.sig
+          cp "$source/catalog-v$RELEASE_VERSION.pub" catalog/catalog.pub
+          cp "$source/catalog-v$RELEASE_VERSION-public-key.pem" catalog/catalog-public-key.pem
+          derived="$(openssl pkey -pubin -in catalog/catalog-public-key.pem -outform DER \
+            | tail -c 32 \
+            | od -An -vtx1 \
+            | tr -d ' \n')"
+          test "$derived" = "$(tr -d ' \r\n' < catalog/catalog.pub)"
+          python catalog/verify_catalog.py \
+            --catalog catalog/catalog.json \
+            --signature catalog/catalog.sig \
+            --public-key catalog/catalog-public-key.pem
       - name: Build and smoke the native application
         shell: bash
         env:
@@ -214,6 +547,65 @@ jobs:
             test -s "$gui"
             python -c 'import pathlib, sys; data = pathlib.Path(sys.argv[1]).read_bytes(); offset = int.from_bytes(data[0x3c:0x40], "little"); data[offset:offset + 4] == b"PE\0\0" or sys.exit("GUI binary is not PE"); optional = offset + 24; subsystem = int.from_bytes(data[optional + 68:optional + 70], "little"); subsystem == 2 or sys.exit(f"expected Windows GUI subsystem 2, found {subsystem}")' "$gui"
           fi
+      - name: Verify Linux ELF architecture, glibc floor, and linkage
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          BINARY: target/release/${{ matrix.binary }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          source /etc/os-release
+          test "$ID" = ubuntu
+          test "$VERSION_ID" = 22.04
+          test "$VERSION_CODENAME" = jammy
+
+          case "$PLATFORM" in
+            linux-x86_64)
+              expected_runner=x86_64
+              expected_machine='Advanced Micro Devices X86-64'
+              ;;
+            linux-aarch64)
+              expected_runner=aarch64
+              expected_machine=AArch64
+              ;;
+            *)
+              echo "unexpected Linux platform: $PLATFORM" >&2
+              exit 1
+              ;;
+          esac
+          test "$(uname -m)" = "$expected_runner"
+          test -x "$BINARY"
+
+          elf_header="$(readelf --file-header "$BINARY")"
+          printf '%s\n' "$elf_header"
+          elf_class="$(sed -n 's/^[[:space:]]*Class:[[:space:]]*//p' <<< "$elf_header")"
+          elf_machine="$(sed -n 's/^[[:space:]]*Machine:[[:space:]]*//p' <<< "$elf_header")"
+          test "$elf_class" = ELF64
+          test "$elf_machine" = "$expected_machine"
+
+          glibc_versions="$(
+            readelf --version-info "$BINARY" \
+              | sed -nE 's/.*Name: GLIBC_([0-9]+([.][0-9]+)+).*/\1/p' \
+              | sort -Vu
+          )"
+          test -n "$glibc_versions"
+          printf 'Required glibc versions:\n%s\n' "$glibc_versions"
+          maximum_glibc="$(tail -n 1 <<< "$glibc_versions")"
+          if dpkg --compare-versions "$maximum_glibc" gt 2.35; then
+            echo "binary requires glibc $maximum_glibc, newer than the 2.35 release ceiling" >&2
+            exit 1
+          fi
+
+          ldd_output="$(ldd "$BINARY" 2>&1)"
+          printf '%s\n' "$ldd_output"
+          if grep -Fq 'not found' <<< "$ldd_output"; then
+            echo 'binary has an unresolved shared-library dependency' >&2
+            exit 1
+          fi
+      - name: Verify the macOS application deployment floor
+        if: runner.os == 'macOS'
+        run: python packaging/verify_macos_deployment.py target/release/uci-grabber --maximum 12.3
       - name: Create deterministic application archive
         shell: bash
         env:
@@ -227,7 +619,7 @@ jobs:
             --binary 'target/release/${{ matrix.binary }}'
             --license LICENSE
             --readme README.md
-            --third-party release-inputs/THIRD-PARTY-LICENSES.txt
+            --third-party release-inputs/licenses/THIRD-PARTY-LICENSES.txt
             --output 'release-assets/${{ matrix.asset }}'
           )
           if test -n '${{ matrix.gui_binary }}'; then
@@ -246,399 +638,364 @@ jobs:
           if-no-files-found: error
           overwrite: true
 
-  maia_source:
-    name: Maia3 reviewed source/build materials
-    needs: gate
-    if: needs.gate.outputs.maia_enabled == 'true'
+  publish:
+    name: Publish verified stable release
+    needs: [gate, catalog_components, app_build]
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ needs.gate.outputs.tag }}
-      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
-        with:
-          python-version: 3.12.10
-      - name: Fetch exact Maia3 and dependency source
-        shell: bash
-        env:
-          MAIA_COMMIT: 1e13597c42d4858b7cfd7cfdae01e297263364b2
-        run: |
-          set -euo pipefail
-          upstream="$RUNNER_TEMP/maia3-upstream"
-          git init "$upstream"
-          git -C "$upstream" remote add origin https://github.com/CSSLab/maia3.git
-          git -C "$upstream" fetch --depth=1 origin "$MAIA_COMMIT"
-          git -C "$upstream" checkout --detach FETCH_HEAD
-          test "$(git -C "$upstream" rev-parse HEAD)" = "$MAIA_COMMIT"
-          test -s "$upstream/LICENSE"
-          test -s "$upstream/maia3/uci.py"
-          mkdir dependency-source release-assets
-          python -m pip download \
-            --dest dependency-source \
-            --no-deps \
-            --no-binary=:all: \
-            'chess==1.11.2'
-          mapfile -t sources < <(find dependency-source -maxdepth 1 -type f)
-          test "${#sources[@]}" = 1
-          python packaging/maia3/verify_file.py "${sources[0]}" \
-            --bytes 6131385 \
-            --sha256 a8b43e5678fdb3000695bdaa573117ad683761e5ca38e591c4826eba6d25bb39
-          python packaging/maia3/make_source_bundle.py \
-            --upstream "$upstream" \
-            --output release-assets/maia3-corresponding-source.tar.gz \
-            --notices release-assets/MAIA3-NOTICES.txt \
-            --dependency-source "${sources[0]}" \
-            --source-review-digest '${{ needs.gate.outputs.source_review_digest }}'
-          tar -tzf release-assets/maia3-corresponding-source.tar.gz \
-            | grep -Fx 'maia3-source/upstream/LICENSE'
-          tar -tzf release-assets/maia3-corresponding-source.tar.gz \
-            | grep -Fx 'maia3-source/uci-grabber-packaging/maia3.spec'
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: component-maia3-source
-          path: release-assets/*
-          if-no-files-found: error
-          overwrite: true
-
-  maia_runtime:
-    name: Maia3 runtime · ${{ matrix.platform }}
-    needs: [gate, maia_source]
-    if: needs.gate.outputs.maia_enabled == 'true'
-    timeout-minutes: 100
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            platform: windows-x86_64
-            archive: zip
-            asset: uci-grabber-maia3-runtime-windows-x86_64.zip
-            wheelhouse_review_variable: MAIA3_WHEELHOUSE_REVIEW_WINDOWS_X86_64
-            smoke_models: maia3-5m
-          - os: macos-15
-            platform: macos-aarch64
-            archive: tar.zst
-            asset: uci-grabber-maia3-runtime-macos-aarch64.tar.zst
-            wheelhouse_review_variable: MAIA3_WHEELHOUSE_REVIEW_MACOS_AARCH64
-            smoke_models: maia3-5m
-          - os: ubuntu-24.04
-            platform: linux-x86_64
-            archive: tar.zst
-            asset: uci-grabber-maia3-runtime-linux-x86_64.tar.zst
-            wheelhouse_review_variable: MAIA3_WHEELHOUSE_REVIEW_LINUX_X86_64
-            smoke_models: maia3-5m maia3-23m maia3-79m
-          - os: ubuntu-24.04-arm
-            platform: linux-aarch64
-            archive: tar.zst
-            asset: uci-grabber-maia3-runtime-linux-aarch64.tar.zst
-            wheelhouse_review_variable: MAIA3_WHEELHOUSE_REVIEW_LINUX_AARCH64
-            smoke_models: maia3-5m
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ needs.gate.outputs.tag }}
-      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
-        with:
-          python-version: 3.12.10
-          cache: pip
-          cache-dependency-path: packaging/maia3/requirements-direct.txt
-      - name: Install deterministic archive tooling on Linux
-        if: runner.os == 'Linux'
-        run: |
-          sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update
-          sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y zstd
-      - name: Install deterministic archive tooling on macOS
-        if: runner.os == 'macOS'
-        run: brew install zstd
-      - name: Fetch exact source and resolve the candidate native wheelhouse
-        shell: bash
-        env:
-          MAIA_COMMIT: 1e13597c42d4858b7cfd7cfdae01e297263364b2
-        run: |
-          set -euo pipefail
-          upstream="$RUNNER_TEMP/maia3-upstream"
-          git init "$upstream"
-          git -C "$upstream" remote add origin https://github.com/CSSLab/maia3.git
-          git -C "$upstream" fetch --depth=1 origin "$MAIA_COMMIT"
-          git -C "$upstream" checkout --detach FETCH_HEAD
-          test "$(git -C "$upstream" rev-parse HEAD)" = "$MAIA_COMMIT"
-          mkdir wheelhouse
-          python -m pip download \
-            --dest wheelhouse \
-            --only-binary=:all: \
-            --index-url https://download.pytorch.org/whl/cpu \
-            --extra-index-url https://pypi.org/simple \
-            --requirement packaging/maia3/requirements-direct.txt
-          mkdir dependency-source
-          python -m pip download \
-            --dest dependency-source \
-            --no-deps \
-            --no-binary=:all: \
-            'chess==1.11.2'
-          mapfile -t chess_sources < <(find dependency-source -maxdepth 1 -type f)
-          test "${#chess_sources[@]}" = 1
-          python packaging/maia3/verify_file.py "${chess_sources[0]}" \
-            --bytes 6131385 \
-            --sha256 a8b43e5678fdb3000695bdaa573117ad683761e5ca38e591c4826eba6d25bb39
-          python packaging/maia3/build_wheel_lock.py \
-            --wheelhouse wheelhouse \
-            --platform '${{ matrix.platform }}' \
-            --requirements "$RUNNER_TEMP/maia3-wheels.txt" \
-            --inventory "$RUNNER_TEMP/WHEELHOUSE.lock.json"
-      - name: Upload candidate wheel inventory for maintainer review
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: maia3-wheelhouse-review-${{ matrix.platform }}
-          path: ${{ runner.temp }}/WHEELHOUSE.lock.json
-          if-no-files-found: error
-          overwrite: true
-      - name: Require the reviewed wheelhouse before installation
-        shell: bash
-        env:
-          REVIEWED_WHEELHOUSE_SHA256: ${{ vars[matrix.wheelhouse_review_variable] }}
-        run: |
-          set -euo pipefail
-          python packaging/maia3/review_digest.py verify \
-            "$RUNNER_TEMP/WHEELHOUSE.lock.json" \
-            --expected "${REVIEWED_WHEELHOUSE_SHA256:-}" \
-            --label '${{ matrix.platform }} wheelhouse'
-      - name: Install only the reviewed wheelhouse and pinned source archives
-        shell: bash
-        run: |
-          set -euo pipefail
-          python -m pip install \
-            --no-index \
-            --find-links wheelhouse \
-            --require-hashes \
-            --requirement "$RUNNER_TEMP/maia3-wheels.txt"
-          mapfile -t chess_sources < <(find dependency-source -maxdepth 1 -type f)
-          test "${#chess_sources[@]}" = 1
-          python -m pip install \
-            --no-deps \
-            --no-build-isolation \
-            "${chess_sources[0]}"
-          python -m pip install \
-            --no-deps \
-            --no-build-isolation \
-            "$RUNNER_TEMP/maia3-upstream"
-          python -c "import torch; assert torch.__version__.split('+')[0] == '2.11.0'; assert torch.version.cuda is None"
-      - name: Build the model-free runtime
-        shell: bash
-        env:
-          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.platform == 'macos-aarch64' && '12.3' || '' }}
-        run: |
-          set -euo pipefail
-          python packaging/maia3/build_runtime.py \
-            --platform '${{ matrix.platform }}' \
-            --upstream "$RUNNER_TEMP/maia3-upstream" \
-            --wheel-inventory "$RUNNER_TEMP/WHEELHOUSE.lock.json" \
-            --work "$RUNNER_TEMP/maia3-build" \
-            --stage "$RUNNER_TEMP/maia3-stage"
-          test -s "$RUNNER_TEMP/maia3-stage/maia3-runtime/BUILDINFO.json"
-          test -s "$RUNNER_TEMP/maia3-stage/maia3-runtime/COPYING-Maia3-AGPL-3.0.txt"
-
-      - name: Verify zero-argument offline UCI behavior with immutable checkpoints
-        shell: bash
-        env:
-          SMOKE_MODELS: ${{ matrix.smoke_models }}
-        run: |
-          set -euo pipefail
-          for model in $SMOKE_MODELS; do
-            case "$model" in
-              maia3-5m)
-                repository=UofTCSSLab/Maia3-5M
-                revision=b6559de2398d7140b985f28fd2c19fb5e47ddabe
-                bytes=20968049
-                sha256=ba14208b2992d85502f5fb501934abf6aaaeb355e9f3fdf90e326911f562524f
-                ;;
-              maia3-23m)
-                repository=UofTCSSLab/Maia3-23M
-                revision=51a0145a8178046f7de23119160b136672deeb2b
-                bytes=91799307
-                sha256=bce6cd1af5f0399ac7eed33fabb7a6a2ef6193662c2740f262bf93af7bfb3569
-                ;;
-              maia3-79m)
-                repository=UofTCSSLab/Maia3-79M
-                revision=a107d6ceb7b298cb04ae1da4edffe2939858b894
-                bytes=315651851
-                sha256=3fc6181d5db789b45a15305732148757ae74efa3e0028e81ba335b462dac45c2
-                ;;
-              *)
-                echo "Unreviewed Maia3 smoke model: $model" >&2
-                exit 1
-                ;;
-            esac
-            checkpoint="$RUNNER_TEMP/$model.pt"
-            curl --fail --location --retry 3 \
-              --output "$checkpoint" \
-              "https://huggingface.co/$repository/resolve/$revision/$model.pt"
-            python packaging/maia3/verify_file.py "$checkpoint" \
-              --bytes "$bytes" \
-              --sha256 "$sha256"
-            python packaging/maia3/smoke_runtime.py \
-              --runtime-root "$RUNNER_TEMP/maia3-stage/maia3-runtime" \
-              --platform '${{ matrix.platform }}' \
-              --model "$model" \
-              --checkpoint "$checkpoint"
-          done
-      - name: Package the verified runtime
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir release-assets
-          python packaging/maia3/package_runtime.py \
-            --stage "$RUNNER_TEMP/maia3-stage" \
-            --format '${{ matrix.archive }}' \
-            --output 'release-assets/${{ matrix.asset }}'
-          test -s 'release-assets/${{ matrix.asset }}'
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: component-maia3-${{ matrix.platform }}
-          path: release-assets/*
-          if-no-files-found: error
-          overwrite: true
-
-  catalog:
-    name: Verify catalog and assemble component assets
-    needs: [gate, licenses, app_build, maia_source, maia_runtime]
-    if: >-
-      always() &&
-      needs.gate.result == 'success' &&
-      needs.licenses.result == 'success' &&
-      needs.app_build.result == 'success' &&
-      (needs.gate.outputs.maia_enabled != 'true' ||
-       (needs.maia_source.result == 'success' && needs.maia_runtime.result == 'success'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ needs.gate.outputs.tag }}
       - name: Download native application packages
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: package-app-*
           path: dist
           merge-multiple: true
-      - name: Download reviewed Maia3 assets
-        if: needs.gate.outputs.maia_enabled == 'true'
+      - name: Download catalog and Maia3 launcher packages
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: component-maia3-*
+          name: UCI-Grabber-catalog-and-components
           path: dist
-          merge-multiple: true
-      - name: Stage catalog verification data
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          cp catalog/catalog.pub dist/catalog.pub
-          cp catalog/schema/recipe-v1.schema.json dist/recipe-v1.schema.json
-          cp catalog/schema/catalog-v1.schema.json dist/catalog-v1.schema.json
-      - name: Verify and stage the signed empty catalog
-        if: needs.gate.outputs.maia_enabled != 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 catalog/verify_catalog.py \
-            --catalog catalog/catalog.json \
-            --signature catalog/catalog.sig \
-            --bootstrap
-          cp catalog/catalog.json dist/catalog.json
-          cp catalog/catalog.sig dist/catalog.sig
-          test "$(wc -c < dist/catalog.sig)" = 64
-          python3 catalog/verify_catalog.py \
-            --catalog dist/catalog.json \
-            --signature dist/catalog.sig \
-            --bootstrap
-      - name: Generate deterministic reviewed Maia3 catalog
-        if: needs.gate.outputs.maia_enabled == 'true'
+      - name: Create and verify the complete release checksum manifest
         shell: bash
         env:
-          RELEASE_TAG: ${{ needs.gate.outputs.tag }}
-          REVIEW_DIGEST: ${{ needs.gate.outputs.metadata_digest }}
+          RELEASE_VERSION: ${{ needs.gate.outputs.version }}
         run: |
           set -euo pipefail
-          epoch="$(git show -s --format=%ct HEAD)"
-          generated="$(date -u -d "@$epoch" +'%Y-%m-%dT%H:%M:%SZ')"
-          expires="$(date -u -d "@$((epoch + 31536000))" +'%Y-%m-%dT%H:%M:%SZ')"
-          arguments=(
-            --assets-dir dist
-            --repository "$GITHUB_REPOSITORY"
-            --tag "$RELEASE_TAG"
-            --generated-at "$generated"
-            --expires-at "$expires"
-            --output dist/catalog.json
-            --include-maia3
-            --maia3-license-review-digest "$REVIEW_DIGEST"
+          test -z "$(find dist -mindepth 1 -maxdepth 1 ! -type f -print -quit)"
+          test ! -e dist/SHA256SUMS
+          expected=(
+            MAIA3-DIRECT-DOWNLOAD-NOTICES.txt
+            UCI-Grabber-macos-aarch64.app.zip
+            catalog-v$RELEASE_VERSION-public-key.pem
+            catalog-v$RELEASE_VERSION.json
+            catalog-v$RELEASE_VERSION.pub
+            catalog-v$RELEASE_VERSION.sig
+            catalog-v1.schema.json
+            catalog.json
+            catalog.pub
+            catalog.sig
+            recipe-v1.schema.json
+            uci-grabber-linux-aarch64.tar.gz
+            uci-grabber-linux-x86_64.tar.gz
+            uci-grabber-maia3-launcher-linux-aarch64.tar.gz
+            uci-grabber-maia3-launcher-linux-x86_64.tar.gz
+            uci-grabber-maia3-launcher-macos-aarch64.tar.gz
+            uci-grabber-maia3-launcher-windows-x86_64.zip
+            uci-grabber-windows-x86_64.zip
           )
-          python3 catalog/generate_catalog.py "${arguments[@]}"
-          python3 -c \
-            'import json, pathlib, sys; data = json.loads(pathlib.Path("dist/catalog.json").read_text()); ids = [recipe["id"] for recipe in data["recipes"]]; ids == ["maia3"] or sys.exit("Maia3-enabled release produced an empty or unexpected catalog")'
-      - name: Sign exact reviewed Maia3 catalog bytes with the offline catalog key
-        if: needs.gate.outputs.maia_enabled == 'true'
-        shell: bash
-        env:
-          PRIVATE_KEY_BASE64: ${{ secrets.CATALOG_ED25519_PRIVATE_KEY_BASE64 }}
-        run: |
-          set -euo pipefail
-          test -n "${PRIVATE_KEY_BASE64:-}" || {
-            echo 'Stable catalog publication requires CATALOG_ED25519_PRIVATE_KEY_BASE64.' >&2
-            exit 1
-          }
-          private_key="$RUNNER_TEMP/catalog-private.pem"
-          derived_public="$RUNNER_TEMP/catalog-public.pem"
-          python3 -c 'import base64, os, pathlib; pathlib.Path(os.environ["RUNNER_TEMP"], "catalog-private.pem").write_bytes(base64.b64decode(os.environ["PRIVATE_KEY_BASE64"], validate=True))'
-          chmod 600 "$private_key"
-          openssl pkey -in "$private_key" -pubout -out "$derived_public"
-          actual="$(openssl pkey -pubin -in "$derived_public" -outform DER | tail -c 32 | od -An -vtx1 | tr -d ' \n')"
-          expected="$(tr -d ' \r\n' < catalog/catalog.pub)"
-          test "$actual" = "$expected" || {
-            echo 'Catalog private key does not match the public key embedded in UCI Grabber.' >&2
-            exit 1
-          }
-          openssl pkeyutl -sign -rawin \
-            -inkey "$private_key" \
-            -in dist/catalog.json \
-            -out dist/catalog.sig
-          test "$(wc -c < dist/catalog.sig)" = 64
-          python3 catalog/verify_catalog.py \
-            --catalog dist/catalog.json \
-            --signature dist/catalog.sig \
-            --public-key "$derived_public"
-          rm -f "$private_key"
-      - name: Inventory the exact release payload
-        shell: bash
-        run: |
-          set -euo pipefail
+          for file in "${expected[@]}"; do
+            test -s "dist/$file"
+          done
+          test "$(find dist -maxdepth 1 -type f | wc -l)" = "${#expected[@]}"
           cd dist
           find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\n' \
             | LC_ALL=C sort \
             | xargs sha256sum > SHA256SUMS
+          test -s SHA256SUMS
           sha256sum --check --strict SHA256SUMS
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: UCI-Grabber-catalog-and-components
-          path: dist/*
-          if-no-files-found: error
-          overwrite: true
-      - name: Create a draft release with the complete catalog and component set
+          test "$(find . -maxdepth 1 -type f | wc -l)" = "$(( ${#expected[@]} + 1 ))"
+      - name: Prepare a clean unpublished release target for retries
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.gate.outputs.tag }}
+        run: |
+          set -euo pipefail
+          pages="$RUNNER_TEMP/existing-release-pages"
+          mkdir "$pages"
+          page=1
+          while :; do
+            response="$pages/page-$page.json"
+            curl --fail --silent --show-error \
+              --header "Authorization: Bearer $GITHUB_TOKEN" \
+              --header 'Accept: application/vnd.github+json' \
+              --header 'X-GitHub-Api-Version: 2022-11-28' \
+              --output "$response" \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/releases?per_page=100&page=$page"
+            count="$(RESPONSE="$response" python3 -c 'import json, os, pathlib, sys; value=json.loads(pathlib.Path(os.environ["RESPONSE"]).read_text()); isinstance(value, list) or sys.exit("release list response is not an array"); print(len(value))')"
+            test "$count" -le 100
+            if test "$count" -lt 100; then
+              break
+            fi
+            page=$((page + 1))
+            test "$page" -le 1000
+          done
+          PAGES="$pages" RELEASE_TAG="$RELEASE_TAG" \
+            ASSET_IDS="$RUNNER_TEMP/existing-release-asset-ids" python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          releases = []
+          for page in Path(os.environ["PAGES"]).glob("page-*.json"):
+              value = json.loads(page.read_text(encoding="utf-8"))
+              if not isinstance(value, list):
+                  raise SystemExit(f"GitHub release page is not an array: {page.name}")
+              releases.extend(value)
+          matches = [item for item in releases if item.get("tag_name") == os.environ["RELEASE_TAG"]]
+          if len(matches) > 1:
+              raise SystemExit("multiple GitHub releases already use the requested tag")
+          asset_ids = []
+          if matches:
+              release = matches[0]
+              if release.get("draft") is not True or release.get("prerelease") is not False:
+                  raise SystemExit("refusing to replace assets on a published or prerelease release")
+              for asset in release.get("assets", []):
+                  asset_id = asset.get("id")
+                  if not isinstance(asset_id, int) or asset_id <= 0 or asset_id in asset_ids:
+                      raise SystemExit("existing draft contains a malformed or duplicate asset id")
+                  asset_ids.append(asset_id)
+          Path(os.environ["ASSET_IDS"]).write_text(
+              "".join(f"{asset_id}\n" for asset_id in asset_ids),
+              encoding="utf-8",
+              newline="\n",
+          )
+          PY
+          while read -r asset_id; do
+            test -n "$asset_id"
+            status="$(curl --silent --show-error \
+              --request DELETE \
+              --header "Authorization: Bearer $GITHUB_TOKEN" \
+              --header 'Accept: application/vnd.github+json' \
+              --header 'X-GitHub-Api-Version: 2022-11-28' \
+              --output /dev/null \
+              --write-out '%{http_code}' \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/assets/$asset_id")"
+            test "$status" = 204
+          done < "$RUNNER_TEMP/existing-release-asset-ids"
+      - name: Upload the complete payload to a draft release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
+          token: ${{ github.token }}
           tag_name: ${{ needs.gate.outputs.tag }}
           draft: true
           prerelease: false
           make_latest: false
           generate_release_notes: true
           body: |
-            Security note: UCI Grabber application archives and portable Maia3 runtimes are
-            checksummed but carry no Authenticode or Apple Developer ID publisher signature
-            and are not notarized, so the operating system may warn before first launch.
-            Required macOS ad-hoc signatures provide no publisher identity. Maia3 checkpoint
-            downloads referenced by the catalog use immutable revisions and are verified
-            against the reviewed size and SHA-256.
+            Download UCI Grabber itself here:
+            - Windows x86-64: `uci-grabber-windows-x86_64.zip`
+            - macOS Apple Silicon: `UCI-Grabber-macos-aarch64.app.zip`
+            - Linux x86-64: `uci-grabber-linux-x86_64.tar.gz`
+            - Linux ARM64: `uci-grabber-linux-aarch64.tar.gz`
+
+            Do not download or open a `uci-grabber-maia3-launcher-*` asset directly.
+            Those are unpersonalized internal components fetched by UCI Grabber and
+            deliberately refuse to run on their own.
+
+            Security note: UCI Grabber application and Maia3 launcher archives
+            carry no Authenticode signature, Apple Developer ID signature, or notarization,
+            so the operating system may warn before first launch. The one-time Ed25519
+            catalog integrity key authenticates this release's catalog and declared hashes;
+            it is not native-code publisher signing. UCI Grabber downloads Maia3, Python,
+            dependencies, and checkpoints directly from their upstream distributors and
+            verifies reviewed versions, sizes, and SHA-256 hashes before installation.
+            UCI Grabber ${{ needs.gate.outputs.tag }} fetches its versioned catalog assets directly and does not
+            depend on the mutable releases/latest endpoint.
           fail_on_unmatched_files: true
-          overwrite_files: false
+          overwrite_files: true
           files: dist/*
+      - id: draft
+        name: Resolve the exact draft and verify every uploaded byte
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.gate.outputs.tag }}
+        run: |
+          set -euo pipefail
+          pages="$RUNNER_TEMP/release-pages"
+          mkdir "$pages"
+          page=1
+          while :; do
+            response="$pages/page-$page.json"
+            curl --fail --silent --show-error \
+              --header "Authorization: Bearer $GITHUB_TOKEN" \
+              --header 'Accept: application/vnd.github+json' \
+              --header 'X-GitHub-Api-Version: 2022-11-28' \
+              --output "$response" \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/releases?per_page=100&page=$page"
+            count="$(RESPONSE="$response" python3 -c 'import json, os, pathlib, sys; value=json.loads(pathlib.Path(os.environ["RESPONSE"]).read_text()); isinstance(value, list) or sys.exit("release list response is not an array"); print(len(value))')"
+            test "$count" -le 100
+            if test "$count" -lt 100; then
+              break
+            fi
+            page=$((page + 1))
+            test "$page" -le 1000
+          done
+          PAGES="$pages" DIST=dist RELEASE_TAG="$RELEASE_TAG" \
+            ASSETS_TSV="$RUNNER_TEMP/release-assets.tsv" \
+            python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          releases = []
+          for page in sorted(Path(os.environ["PAGES"]).glob("page-*.json")):
+              value = json.loads(page.read_text(encoding="utf-8"))
+              if not isinstance(value, list):
+                  raise SystemExit(f"GitHub release page is not an array: {page.name}")
+              releases.extend(value)
+          tagged = [item for item in releases if item.get("tag_name") == os.environ["RELEASE_TAG"]]
+          drafts = [item for item in tagged if item.get("draft") is True]
+          if len(tagged) != 1 or len(drafts) != 1:
+              raise SystemExit(
+                  "expected exactly one release for the tag and for it to be a draft; "
+                  f"tagged={len(tagged)}, drafts={len(drafts)}"
+              )
+          release = drafts[0]
+          if release.get("draft") is not True or release.get("prerelease") is not False:
+              raise SystemExit("release is not the expected stable draft")
+          local_root = Path(os.environ["DIST"])
+          local = {}
+          for path in local_root.iterdir():
+              if path.is_symlink() or not path.is_file():
+                  raise SystemExit(f"unexpected local release entry: {path.name}")
+              digest = hashlib.sha256(path.read_bytes()).hexdigest()
+              local[path.name] = (path.stat().st_size, digest)
+          remote = {}
+          for asset in release.get("assets", []):
+              name = asset.get("name")
+              size = asset.get("size")
+              asset_id = asset.get("id")
+              digest = asset.get("digest")
+              if (
+                  not isinstance(name, str)
+                  or name in remote
+                  or not isinstance(size, int)
+                  or not isinstance(asset_id, int)
+                  or asset_id <= 0
+                  or asset.get("state") != "uploaded"
+              ):
+                  raise SystemExit("remote release contains malformed or duplicate assets")
+              remote[name] = (size, digest, asset_id)
+          local_names = set(local)
+          remote_names = set(remote)
+          size_mismatches = sorted(
+              name for name in local_names & remote_names if local[name][0] != remote[name][0]
+          )
+          digest_mismatches = sorted(
+              name
+              for name in local_names & remote_names
+              if remote[name][1] != f"sha256:{local[name][1]}"
+          )
+          if remote_names != local_names or size_mismatches or digest_mismatches:
+              raise SystemExit(
+                  "remote release assets differ from the local whitelist: "
+                  f"missing={sorted(local_names - remote_names)}, "
+                  f"unexpected={sorted(remote_names - local_names)}, "
+                  f"size_mismatches={size_mismatches}, "
+                  f"digest_mismatches={digest_mismatches}"
+              )
+          release_id = release.get("id")
+          if not isinstance(release_id, int) or release_id <= 0:
+              raise SystemExit("release id is missing or invalid")
+          with Path(os.environ["ASSETS_TSV"]).open("w", encoding="utf-8", newline="\n") as handle:
+              for name in sorted(local):
+                  if "\t" in name or "\n" in name:
+                      raise SystemExit("unsafe release asset name")
+                  handle.write(f"{name}\t{remote[name][2]}\t{local[name][1]}\n")
+          Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8").write(
+              f"release_id={release_id}\n"
+          )
+          PY
+          tab="$(printf '\t')"
+          while IFS="$tab" read -r name asset_id expected_sha256; do
+            test -n "$name"
+            remote="$RUNNER_TEMP/remote-asset-$asset_id"
+            curl --fail --silent --show-error --location \
+              --retry 5 --retry-all-errors \
+              --header "Authorization: Bearer $GITHUB_TOKEN" \
+              --header 'Accept: application/octet-stream' \
+              --header 'X-GitHub-Api-Version: 2022-11-28' \
+              --output "$remote" \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/assets/$asset_id"
+            actual_sha256="$(sha256sum "$remote" | awk '{print $1}')"
+            test "$actual_sha256" = "$expected_sha256"
+            cmp "dist/$name" "$remote"
+          done < "$RUNNER_TEMP/release-assets.tsv"
+      - name: Publish only the verified draft and make it latest
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ steps.draft.outputs.release_id }}
+          RELEASE_TAG: ${{ needs.gate.outputs.tag }}
+        run: |
+          set -euo pipefail
+          api="https://api.github.com/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID"
+          curl --fail --silent --show-error \
+            --header "Authorization: Bearer $GITHUB_TOKEN" \
+            --header 'Accept: application/vnd.github+json' \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            --output "$RUNNER_TEMP/prepublish-release.json" \
+            "$api"
+          RELEASE_JSON="$RUNNER_TEMP/prepublish-release.json" \
+            RELEASE_ID="$RELEASE_ID" RELEASE_TAG="$RELEASE_TAG" python3 -c \
+            'import json, os, pathlib, sys; release=json.loads(pathlib.Path(os.environ["RELEASE_JSON"]).read_text()); release.get("id") == int(os.environ["RELEASE_ID"]) or sys.exit("GitHub returned the wrong draft id"); release.get("tag_name") == os.environ["RELEASE_TAG"] or sys.exit("GitHub returned the wrong draft tag"); release.get("draft") is True or sys.exit("release is no longer a draft"); release.get("prerelease") is False or sys.exit("release became a prerelease")'
+          patch_status=0
+          curl --fail --silent --show-error \
+            --retry 5 --retry-all-errors \
+            --request PATCH \
+            --header "Authorization: Bearer $GITHUB_TOKEN" \
+            --header 'Accept: application/vnd.github+json' \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            --header 'Content-Type: application/json' \
+            --data '{"draft":false,"make_latest":"true"}' \
+            --output "$RUNNER_TEMP/published-release.json" \
+            "$api" || patch_status=$?
+          published=false
+          for attempt in $(seq 1 10); do
+            if curl --fail --silent --show-error \
+              --retry 3 --retry-all-errors \
+              --header "Authorization: Bearer $GITHUB_TOKEN" \
+              --header 'Accept: application/vnd.github+json' \
+              --header 'X-GitHub-Api-Version: 2022-11-28' \
+              --output "$RUNNER_TEMP/published-release-check.json" \
+              "$api"; then
+              if RELEASE_JSON="$RUNNER_TEMP/published-release-check.json" \
+                RELEASE_ID="$RELEASE_ID" RELEASE_TAG="$RELEASE_TAG" python3 -c \
+                'import json, os, pathlib, sys; release=json.loads(pathlib.Path(os.environ["RELEASE_JSON"]).read_text()); release.get("id") == int(os.environ["RELEASE_ID"]) or sys.exit("GitHub returned the wrong release id"); release.get("tag_name") == os.environ["RELEASE_TAG"] or sys.exit("GitHub returned the wrong release tag"); release.get("draft") is False or sys.exit("release is still a draft"); release.get("prerelease") is False or sys.exit("GitHub marked the release as a prerelease")'; then
+                published=true
+                break
+              fi
+            fi
+            echo "Publication confirmation attempt $attempt did not observe a stable release yet."
+            sleep 3
+          done
+          test "$published" = true || {
+            echo "Release publication was not confirmed (PATCH status $patch_status)." >&2
+            exit 1
+          }
+      - name: Verify public versioned catalog bytes after publication
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ steps.draft.outputs.release_id }}
+          RELEASE_TAG: ${{ needs.gate.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.gate.outputs.version }}
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error \
+            --retry 5 --retry-all-errors \
+            --header "Authorization: Bearer $GITHUB_TOKEN" \
+            --header 'Accept: application/vnd.github+json' \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            --output "$RUNNER_TEMP/latest-release.json" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/latest"
+          RELEASE_JSON="$RUNNER_TEMP/latest-release.json" \
+            RELEASE_ID="$RELEASE_ID" RELEASE_TAG="$RELEASE_TAG" python3 -c \
+            'import json, os, pathlib, sys; release=json.loads(pathlib.Path(os.environ["RELEASE_JSON"]).read_text()); release.get("id") == int(os.environ["RELEASE_ID"]) or sys.exit("published release is not latest"); release.get("tag_name") == os.environ["RELEASE_TAG"] or sys.exit("latest release uses the wrong tag")'
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/$RELEASE_TAG"
+          for name in \
+            "catalog-v$RELEASE_VERSION.json" \
+            "catalog-v$RELEASE_VERSION.sig" \
+            "catalog-v$RELEASE_VERSION.pub" \
+            "catalog-v$RELEASE_VERSION-public-key.pem"; do
+            curl --fail --silent --show-error --location \
+              --retry 5 --retry-all-errors \
+              --output "$RUNNER_TEMP/$name" \
+              "$base/$name"
+            cmp "dist/$name" "$RUNNER_TEMP/$name"
+          done

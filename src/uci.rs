@@ -19,9 +19,13 @@ pub struct ValidationTimeouts {
 impl Default for ValidationTimeouts {
     fn default() -> Self {
         Self {
-            uci: Duration::from_secs(10),
+            // Curated portable engines may verify hundreds of megabytes and
+            // initialize a CPU-only ML runtime before they can answer `uci`.
+            // Cancellation is polled every 100 ms while these long ceilings
+            // prevent slow removable storage from causing a false failure.
+            uci: Duration::from_secs(10 * 60),
             ready: Duration::from_secs(10 * 60),
-            search: Duration::from_secs(15),
+            search: Duration::from_secs(2 * 60),
             quit: Duration::from_secs(2),
         }
     }

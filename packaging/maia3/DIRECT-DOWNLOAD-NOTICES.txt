@@ -1,0 +1,53 @@
+UCI Grabber Maia3 direct-download notice
+========================================
+
+UCI Grabber's GitHub release does not contain Maia3, CPython, PyTorch, NumPy,
+python-chess, or Maia checkpoint bytes.  When a user chooses a Maia model,
+UCI Grabber retrieves each hash-pinned artifact directly from its upstream
+publisher and assembles a private, portable UCI package on that user's
+computer.  UCI Grabber does not relicense any retrieved material.
+
+The only Maia-related native asset published by UCI Grabber is its small
+Apache-2.0 process launcher.  The launcher starts the locally assembled Python
+environment through a process boundary.  Its complete source and the Python
+entry-point source are in the tagged UCI Grabber repository.
+
+Maia3 code
+  Project: https://github.com/CSSLab/maia3
+  Version: 0.1.0
+  Reviewed commit: 1e13597c42d4858b7cfd7cfdae01e297263364b2
+  License stated upstream: GNU Affero General Public License v3.0
+  Exact source download:
+    https://codeload.github.com/CSSLab/maia3/tar.gz/1e13597c42d4858b7cfd7cfdae01e297263364b2
+
+Runtime dependencies
+  The portable CPython build is retrieved from the immutable Astral
+  python-build-standalone release.  Python packages are retrieved as exact
+  wheels or source archives from PyPI or PyTorch's official CPU wheel index.
+  Each component retains its own license and notices.  The signed release
+  catalog records every URL, byte count, SHA-256 digest, and destination.
+
+Checkpoints
+  Checkpoint bytes are retrieved only after the user selects a model.  Every
+  download is from an immutable Hugging Face revision and is checked by byte
+  count and SHA-256 before it can be used.
+
+  Maia3 5M
+    https://huggingface.co/UofTCSSLab/Maia3-5M/tree/b6559de2398d7140b985f28fd2c19fb5e47ddabe
+    The reviewed model card applies CC BY 4.0 to the paper, points to the Maia3
+    repository for code and weights terms, and carries no independent weights
+    LICENSE file.
+
+  Maia3 23M
+    https://huggingface.co/UofTCSSLab/Maia3-23M/tree/51a0145a8178046f7de23119160b136672deeb2b
+    The reviewed model card applies CC BY 4.0 to the paper, points to the Maia3
+    repository for code and weights terms, and carries no independent weights
+    LICENSE file.
+
+  Maia3 79M
+    https://huggingface.co/UofTCSSLab/Maia3-79M/tree/a107d6ceb7b298cb04ae1da4edffe2939858b894
+    The reviewed model card states AGPLv3.
+
+The release review approves direct end-user retrieval of these pinned bytes
+only.  It does not approve redistribution of checkpoint or dependency bytes as
+UCI Grabber release assets, and it is not legal advice.

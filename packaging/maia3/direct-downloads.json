@@ -1,0 +1,221 @@
+{
+  "schema": "uci-grabber-direct-downloads/v1",
+  "python": {
+    "distribution": "python-build-standalone",
+    "version": "3.12.13",
+    "release": "20260510",
+    "platforms": {
+      "windows-x86_64": {
+        "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260510/cpython-3.12.13%2B20260510-x86_64-pc-windows-msvc-install_only_stripped.tar.gz",
+        "byte_count": 21921642,
+        "sha256": "24168aff2e7d93784c6a436124c4ebb79b076a4e289bde4902c08333507b71d0",
+        "format": "tar.gz",
+        "destination": "package/python-runtime"
+      },
+      "macos-aarch64": {
+        "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260510/cpython-3.12.13%2B20260510-aarch64-apple-darwin-install_only_stripped.tar.gz",
+        "byte_count": 24942229,
+        "sha256": "55bc1a5edbc8ac4da0081f4f5731ed2d1ed10c57cb37a820b2a0dbc7cad742e9",
+        "format": "tar.gz",
+        "destination": "package/python-runtime"
+      },
+      "linux-x86_64": {
+        "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260510/cpython-3.12.13%2B20260510-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz",
+        "byte_count": 34075380,
+        "sha256": "d480f5d5878910ecbae212bf23bd7c25d7b209eb8cf5e98823c977384d272e88",
+        "format": "tar.gz",
+        "destination": "package/python-runtime"
+      },
+      "linux-aarch64": {
+        "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260510/cpython-3.12.13%2B20260510-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz",
+        "byte_count": 29134681,
+        "sha256": "8e2907baca8b08ae43f366e65f09fda6337d3543f322c399d8800cf689c79973",
+        "format": "tar.gz",
+        "destination": "package/python-runtime"
+      }
+    }
+  },
+  "sources": {
+    "maia3": {
+      "url": "https://codeload.github.com/CSSLab/maia3/tar.gz/1e13597c42d4858b7cfd7cfdae01e297263364b2",
+      "byte_count": 67333,
+      "sha256": "774c363dd2f2d10d6996ef5ef0bdba473ae769a79e442132bd82d0e999b7b488",
+      "format": "tar.gz",
+      "destination": "package/maia-source"
+    },
+    "chess": {
+      "url": "https://files.pythonhosted.org/packages/93/09/7d04d7581ae3bb8b598017941781bceb7959dd1b13e3ebf7b6a2cd843bc9/chess-1.11.2.tar.gz",
+      "byte_count": 6131385,
+      "sha256": "a8b43e5678fdb3000695bdaa573117ad683761e5ca38e591c4826eba6d25bb39",
+      "format": "tar.gz",
+      "destination": "package/chess-source"
+    }
+  },
+  "packages": {
+    "required": [
+      "filelock",
+      "fsspec",
+      "jinja2",
+      "markupsafe",
+      "mpmath",
+      "networkx",
+      "numpy",
+      "setuptools",
+      "sympy",
+      "torch",
+      "typing-extensions"
+    ],
+    "common": {
+      "filelock": {
+        "url": "https://files.pythonhosted.org/packages/06/79/b4c714bef36bc4ec2beeae1e0c124f0223888cd8c6feb1cdc56038116920/filelock-3.32.0-py3-none-any.whl",
+        "byte_count": 97732,
+        "sha256": "d396bea984af47333ef05e50eae7eff88c84256de6112aea0ec48a233c064fe3",
+        "format": "zip",
+        "destination": "package/packages/filelock"
+      },
+      "fsspec": {
+        "url": "https://files.pythonhosted.org/packages/e5/22/4222d7ddf3da30f363edaa98e329c2bce6c65497c9cb2810931c8b2c0fbc/fsspec-2026.6.0-py3-none-any.whl",
+        "byte_count": 203949,
+        "sha256": "02e0b71817df9b2169dc30a16832045764def1191b43dcff5bb85bdee212d2a1",
+        "format": "zip",
+        "destination": "package/packages/fsspec"
+      },
+      "jinja2": {
+        "url": "https://files.pythonhosted.org/packages/62/a1/3d680cbfd5f4b8f15abc1d571870c5fc3e594bb582bc3b64ea099db13e56/jinja2-3.1.6-py3-none-any.whl",
+        "byte_count": 134899,
+        "sha256": "85ece4451f492d0c13c5dd7c13a64681a86afae63a5f347908daf103ce6d2f67",
+        "format": "zip",
+        "destination": "package/packages/jinja2"
+      },
+      "mpmath": {
+        "url": "https://files.pythonhosted.org/packages/43/e3/7d92a15f894aa0c9c4b49b8ee9ac9850d6e63b03c9c32c0367a13ae62209/mpmath-1.3.0-py3-none-any.whl",
+        "byte_count": 536198,
+        "sha256": "a0b2b9fe80bbcd81a6647ff13108738cfb482d481d826cc0e02f5b35e5c88d2c",
+        "format": "zip",
+        "destination": "package/packages/mpmath"
+      },
+      "networkx": {
+        "url": "https://files.pythonhosted.org/packages/9e/c9/b2622292ea83fbb4ec318f5b9ab867d0a28ab43c5717bb85b0a5f6b3b0a4/networkx-3.6.1-py3-none-any.whl",
+        "byte_count": 2068504,
+        "sha256": "d47fbf302e7d9cbbb9e2555a0d267983d2aa476bac30e90dfbe5669bd57f3762",
+        "format": "zip",
+        "destination": "package/packages/networkx"
+      },
+      "setuptools": {
+        "url": "https://files.pythonhosted.org/packages/a3/dc/17031897dae0efacfea57dfd3a82fdd2a2aeb58e0ff71b77b87e44edc772/setuptools-80.9.0-py3-none-any.whl",
+        "byte_count": 1201486,
+        "sha256": "062d34222ad13e0cc312a4c02d73f059e86a4acbfbdea8f8f76b28c99f306922",
+        "format": "zip",
+        "destination": "package/packages/setuptools"
+      },
+      "sympy": {
+        "url": "https://files.pythonhosted.org/packages/a2/09/77d55d46fd61b4a135c444fc97158ef34a095e5681d0a6c10b75bf356191/sympy-1.14.0-py3-none-any.whl",
+        "byte_count": 6299353,
+        "sha256": "e091cc3e99d2141a0ba2847328f5479b05d94a6635cb96148ccb3f34671bd8f5",
+        "format": "zip",
+        "destination": "package/packages/sympy"
+      },
+      "typing-extensions": {
+        "url": "https://files.pythonhosted.org/packages/49/d3/b8441a820a491ddfc024b0b0cf0393375b75ea13866d9c66727e54c2fc80/typing_extensions-4.16.0-py3-none-any.whl",
+        "byte_count": 45571,
+        "sha256": "481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8",
+        "format": "zip",
+        "destination": "package/packages/typing-extensions"
+      }
+    },
+    "platforms": {
+      "windows-x86_64": {
+        "markupsafe": {
+          "url": "https://files.pythonhosted.org/packages/aa/5b/bec5aa9bbbb2c946ca2733ef9c4ca91c91b6a24580193e891b5f7dbe8e1e/markupsafe-3.0.3-cp312-cp312-win_amd64.whl",
+          "byte_count": 15105,
+          "sha256": "26a5784ded40c9e318cfc2bdb30fe164bdb8665ded9cd64d500a34fb42067b1c",
+          "format": "zip",
+          "destination": "package/packages/markupsafe"
+        },
+        "numpy": {
+          "url": "https://files.pythonhosted.org/packages/36/fa/8c9210162ca1b88529ab76b41ba02d433fd54fecaf6feb70ef9f124683f1/numpy-2.2.6-cp312-cp312-win_amd64.whl",
+          "byte_count": 12614190,
+          "sha256": "c1f9540be57940698ed329904db803cf7a402f3fc200bfe599334c9bd84a40b2",
+          "format": "zip",
+          "destination": "package/packages/numpy"
+        },
+        "torch": {
+          "url": "https://download-r2.pytorch.org/whl/cpu/torch-2.11.0%2Bcpu-cp312-cp312-win_amd64.whl",
+          "byte_count": 114469197,
+          "sha256": "1abeaa46fa7532ed35ed79146f4de5d7a9d4b30462c98052ea4ddfe781ea3eca",
+          "format": "zip",
+          "destination": "package/packages/torch"
+        }
+      },
+      "macos-aarch64": {
+        "markupsafe": {
+          "url": "https://files.pythonhosted.org/packages/9a/81/7e4e08678a1f98521201c3079f77db69fb552acd56067661f8c2f534a718/markupsafe-3.0.3-cp312-cp312-macosx_11_0_arm64.whl",
+          "byte_count": 12020,
+          "sha256": "1872df69a4de6aead3491198eaf13810b565bdbeec3ae2dc8780f14458ec73ce",
+          "format": "zip",
+          "destination": "package/packages/markupsafe"
+        },
+        "numpy": {
+          "url": "https://files.pythonhosted.org/packages/66/ee/560deadcdde6c2f90200450d5938f63a34b37e27ebff162810f716f6a230/numpy-2.2.6-cp312-cp312-macosx_11_0_arm64.whl",
+          "byte_count": 14119362,
+          "sha256": "de749064336d37e340f640b05f24e9e3dd678c57318c7289d222a8a2f543e90c",
+          "format": "zip",
+          "destination": "package/packages/numpy"
+        },
+        "torch": {
+          "url": "https://files.pythonhosted.org/packages/6f/8b/69e3008d78e5cee2b30183340cc425081b78afc5eff3d080daab0adda9aa/torch-2.11.0-cp312-cp312-macosx_11_0_arm64.whl",
+          "byte_count": 80606338,
+          "sha256": "4b5866312ee6e52ea625cd211dcb97d6a2cdc1131a5f15cc0d87eec948f6dd34",
+          "format": "zip",
+          "destination": "package/packages/torch"
+        }
+      },
+      "linux-x86_64": {
+        "markupsafe": {
+          "url": "https://files.pythonhosted.org/packages/3c/2e/8d0c2ab90a8c1d9a24f0399058ab8519a3279d1bd4289511d74e909f060e/markupsafe-3.0.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+          "byte_count": 22947,
+          "sha256": "d6dd0be5b5b189d31db7cda48b91d7e0a9795f31430b7f271219ab30f1d3ac9d",
+          "format": "zip",
+          "destination": "package/packages/markupsafe"
+        },
+        "numpy": {
+          "url": "https://files.pythonhosted.org/packages/8c/3d/1e1db36cfd41f895d266b103df00ca5b3cbe965184df824dec5c08c6b803/numpy-2.2.6-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+          "byte_count": 16527618,
+          "sha256": "fd83c01228a688733f1ded5201c678f0c53ecc1006ffbc404db9f7a899ac6249",
+          "format": "zip",
+          "destination": "package/packages/numpy"
+        },
+        "torch": {
+          "url": "https://download-r2.pytorch.org/whl/cpu/torch-2.11.0%2Bcpu-cp312-cp312-manylinux_2_28_x86_64.whl",
+          "byte_count": 190312281,
+          "sha256": "f82e2ae20c1545bb03997d1cc3143d94e14b800038669ee1aca45808a9acc338",
+          "format": "zip",
+          "destination": "package/packages/torch"
+        }
+      },
+      "linux-aarch64": {
+        "markupsafe": {
+          "url": "https://files.pythonhosted.org/packages/1e/2c/799f4742efc39633a1b54a92eec4082e4f815314869865d876824c257c1e/markupsafe-3.0.3-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl",
+          "byte_count": 24332,
+          "sha256": "3a7e8ae81ae39e62a41ec302f972ba6ae23a5c5396c8e60113e9066ef893da0d",
+          "format": "zip",
+          "destination": "package/packages/markupsafe"
+        },
+        "numpy": {
+          "url": "https://files.pythonhosted.org/packages/f8/35/8c80729f1ff76b3921d5c9487c7ac3de9b2a103b1cd05e905b3090513510/numpy-2.2.6-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl",
+          "byte_count": 14018462,
+          "sha256": "f2618db89be1b4e05f7a1a847a9c1c0abd63e63a1607d892dd54668dd92faf87",
+          "format": "zip",
+          "destination": "package/packages/numpy"
+        },
+        "torch": {
+          "url": "https://download-r2.pytorch.org/whl/cpu/torch-2.11.0%2Bcpu-cp312-cp312-manylinux_2_28_aarch64.whl",
+          "byte_count": 148128397,
+          "sha256": "70ecb2659af6373b7c5336e692e665605b0201ea21ff51aaea47e1d75ea6b5aa",
+          "format": "zip",
+          "destination": "package/packages/torch"
+        }
+      }
+    }
+  }
+}

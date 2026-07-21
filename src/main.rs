@@ -40,7 +40,7 @@ enum Command {
 
 #[derive(Debug, Args)]
 struct ListArgs {
-    /// Explicitly download and verify the latest signed catalog first.
+    /// Re-download and verify this app release's immutable catalog first.
     #[arg(long)]
     refresh: bool,
 }
@@ -147,7 +147,7 @@ fn list(store: &RegistryStore, custom: &CustomRecipeStore, arguments: &ListArgs)
     } else {
         preferred_catalog(&client)?
     };
-    println!("Curated (signed):");
+    println!("Curated (release-verified):");
     print_recipes(&catalog.catalog.recipes);
     println!("Unreviewed custom:");
     print_recipes(&custom.load_all()?);

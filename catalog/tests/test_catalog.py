@@ -13,6 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY_ROOT = ROOT.parent
 MAIA_METADATA = REPOSITORY_ROOT / "packaging" / "maia3" / "component-metadata.json"
+MAIA_DIRECT_DOWNLOADS = REPOSITORY_ROOT / "packaging" / "maia3" / "direct-downloads.json"
 sys.path.insert(0, str(ROOT))
 from validate_catalog import load_and_validate, validate_recipe  # noqa: E402
 from verify_catalog import decode_signature  # noqa: E402
@@ -90,6 +91,7 @@ class CatalogTests(unittest.TestCase):
 
     def test_maia_generation_requires_exact_review_digest(self) -> None:
         metadata = json.loads(MAIA_METADATA.read_text(encoding="utf-8"))
+        direct = json.loads(MAIA_DIRECT_DOWNLOADS.read_text(encoding="utf-8"))
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             for index, runtime in enumerate(metadata["runtimes"].values()):
@@ -130,16 +132,16 @@ class CatalogTests(unittest.TestCase):
                 {
                     "spdx": "LicenseRef-Maia3-Composite-Terms",
                     "name": (
-                        "Composite installation: Maia3 code under AGPL-3.0; packaged "
+                        "Composite installation: Maia3 code under AGPL-3.0; direct "
                         "dependencies and checkpoints retain their respective terms"
                     ),
                     "url": (
                         "https://github.com/EnchiladaBoy/UCI-Grabber/releases/download/"
-                        "v1.2.3/MAIA3-NOTICES.txt"
+                        "v1.2.3/MAIA3-DIRECT-DOWNLOAD-NOTICES.txt"
                     ),
                     "source_url": (
-                        "https://github.com/EnchiladaBoy/UCI-Grabber/releases/download/"
-                        "v1.2.3/maia3-corresponding-source.tar.gz"
+                        "https://github.com/CSSLab/maia3/tree/"
+                        "1e13597c42d4858b7cfd7cfdae01e297263364b2"
                     ),
                 },
             )
@@ -159,17 +161,55 @@ class CatalogTests(unittest.TestCase):
                 for package in model["packages"]:
                     artifacts = package["artifacts"]
                     self.assertEqual(
-                        [item["kind"] for item in artifacts], ["runtime", "model"]
+                        [item["kind"] for item in artifacts],
+                        ["runtime", *("other" for _ in range(14)), "model"],
                     )
+                    self.assertEqual(len(artifacts), 16)
                     runtime = metadata["runtimes"][package["platform"]]
                     self.assertEqual(
                         artifacts[0]["url"],
                         "https://github.com/EnchiladaBoy/UCI-Grabber/releases/download/"
                         f"v1.2.3/{runtime['asset']}",
                     )
-                    self.assertEqual(artifacts[1]["url"], expected_model_urls[model["id"]])
+                    self.assertEqual(artifacts[0]["destination"], "package/launcher")
+                    platform = package["platform"]
+                    expected_upstream = [
+                        direct["python"]["platforms"][platform],
+                        direct["sources"]["maia3"],
+                        direct["sources"]["chess"],
+                    ]
+                    common_downloads = direct["packages"]["common"]
+                    platform_downloads = direct["packages"]["platforms"][platform]
+                    for dependency in direct["packages"]["required"]:
+                        expected_upstream.append(
+                            common_downloads.get(dependency, platform_downloads.get(dependency))
+                        )
+                    for actual, expected in zip(artifacts[1:15], expected_upstream, strict=True):
+                        self.assertEqual(
+                            {key: value for key, value in actual.items() if key != "kind"},
+                            expected,
+                        )
+                    self.assertEqual(artifacts[-1]["url"], expected_model_urls[model["id"]])
+                    self.assertEqual(
+                        artifacts[-1]["destination"],
+                        f"package/launcher/models/{model['id']}.pt",
+                    )
+                    self.assertEqual(
+                        package["executable"],
+                        f"package/launcher/{runtime['executable_template']}",
+                    )
+                    self.assertEqual(package["working_directory"], "package/launcher")
+                    self.assertEqual(len({item["destination"] for item in artifacts}), 16)
+                    release_artifact_urls = [
+                        item["url"]
+                        for item in artifacts
+                        if item["url"].startswith(
+                            "https://github.com/EnchiladaBoy/UCI-Grabber/releases/download/"
+                        )
+                    ]
+                    self.assertEqual(release_artifact_urls, [artifacts[0]["url"]])
                     self.assertRegex(
-                        artifacts[1]["url"],
+                        artifacts[-1]["url"],
                         r"^https://huggingface\.co/[^/]+/[^/]+/resolve/[0-9a-f]{40}/[^/]+$",
                     )
 

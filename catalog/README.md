@@ -11,20 +11,26 @@ hooks, or write outside its immutable installation generation.
 
 ## Trust classes
 
-- Curated recipes are present only in a currently valid, signed catalog.
+- Curated recipes are present only in the signed catalog embedded in that app
+  release (or the byte-identical, version-specific release asset).
 - A local or HTTPS recipe imported by the user is always labelled Unreviewed.
 - An installed executable is never trusted on behalf of FishEye. FishEye
   fingerprints and validates the executable independently.
 
-`catalog-public-key.pem` is the production catalog verification key. Its private
-half is never tracked and is retained only in protected release-signing storage.
-App-only releases verify and publish the already signed empty catalog, so the
-private key does not need to leave offline storage. A reviewed Maia3 release
-generates an artifact-specific catalog in CI and therefore additionally requires
-the `CATALOG_ED25519_PRIVATE_KEY_BASE64` Actions secret; the workflow checks that
-key against `catalog.pub` before signing. Rotating the key requires replacing both
-public-key files, re-signing the empty bundled catalog, and shipping the new
-verification key in an application update.
+The checked-in `catalog-public-key.pem`, `catalog.pub`, `catalog.json`, and
+`catalog.sig` form a signed empty bootstrap for source builds and v0.1.0
+compatibility. A production release first builds and hashes UCI Grabber's four
+small Maia launchers, combines those hashes with reviewed immutable upstream
+artifacts, then generates a fresh one-time Ed25519 key and a populated catalog.
+The release app is compiled with that catalog, signature, and public key; the
+private key is discarded before publication. The matching remote assets use versioned names
+such as `catalog-v0.2.0.json` and are never obtained through a mutable `latest`
+URL. Consequently, changing the curated catalog requires a new app release and
+no persistent signing secret or GitHub repository setting is required.
+
+A plain build from the tagged source keeps the bootstrap key. It cannot verify
+the different one-time key created later by release CI, so refreshing metadata
+does not turn a source build into the populated production package.
 
 ## Limits
 
@@ -32,31 +38,36 @@ The v1 application enforces a 512 KiB recipe/catalog input limit, 4 KiB
 signature limit, 1 GiB runtime artifact limit, 400 MiB model artifact limit,
 2 GiB cumulative declared-download and extracted-install limits, a generation-
 wide 40,000 filesystem-entry limit, and a 1 GiB per-entry limit. Redirects
-remain HTTPS and are bounded. Archive paths, symlinks, device nodes, absolute
-paths, Windows drives/alternate streams/invalid characters/reserved device
-names, backslashes, dot aliases, trailing dots/spaces, and `..` traversal are
-rejected.
+remain HTTPS and are bounded. Archive paths, device nodes, absolute paths,
+Windows drives/alternate streams/invalid characters/reserved device names,
+backslashes, dot aliases, trailing dots/spaces, and `..` traversal are rejected.
+Exact duplicate output paths always fail; case-folding collisions also fail on
+case-insensitive destination filesystems. Contained relative links to regular
+files are flattened; all other links fail.
 
 ## Maia3 production recipe
 
 Maia3 is the sole curated production recipe. It offers the 5M, 23M, and 79M
 models as variants of one recipe, with checkpoint downloads pinned directly to
 full Hugging Face revisions. The checked-in bootstrap `catalog.json` remains
-empty so an application package never promises release assets that do not yet
-exist. The release generator includes exactly one Maia3 recipe only when
-`--include-maia3` and the exact SHA-256 of the reviewed metadata are supplied.
+empty so source builds never promise release assets that do not yet exist.
+Release CI overlays the generated populated catalog before compiling each
+portable application package. The generator includes exactly one Maia3 recipe
+only when `--include-maia3` and the exact SHA-256 of the reviewed metadata are
+supplied. The recipe combines a same-release UCI Grabber launcher with portable
+Python, Maia source, runtime-only dependency wheels, and a checkpoint retrieved
+directly from immutable upstream publisher URLs.
 
-CI obtains that digest from `MAIA3_MODEL_LICENSE_REVIEW` only after written
-review of download, use, and redistribution for the exact checkpoint revisions.
-Independent digest gates bind the runtime source/build policy and each
-platform's canonical wheelhouse. The recipe's License link points to the exact
-same-release `MAIA3-NOTICES.txt`, which carries the Maia3 code license and lists
-the pinned model-card/terms pages for every checkpoint without claiming that
-one license covers the whole installation. Its Source link points directly to
-`maia3-corresponding-source.tar.gz` on that same tagged UCI Grabber release.
+CI obtains that digest from the strict, checked-in `release-review.json`, which
+records the exact direct-retrieval scope and binds the component metadata,
+artifact manifest, and active assembly inputs. The recipe's License link points
+to the exact same-release `MAIA3-DIRECT-DOWNLOAD-NOTICES.txt`; its Source link
+points to the exact immutable Maia upstream commit. UCI Grabber release assets
+contain none of those third-party bytes.
 
-Application and runtime archives are portable and carry no Authenticode or Apple
+Application and launcher archives are portable and carry no Authenticode or Apple
 Developer ID publisher signature and are not notarized. The catalog signature
 authenticates the catalog and its declared hashes, not native-code publisher
 identity, so operating-system warnings may still appear. Required macOS ad-hoc
-signatures do not identify or establish trust in a publisher.
+signatures do not identify or establish trust in a publisher. The one-time
+catalog key likewise provides no publisher identity.

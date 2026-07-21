@@ -16,7 +16,11 @@ ROOT = Path(__file__).resolve().parent
 REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 TAG = re.compile(r"^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
 sys.path.insert(0, str(ROOT.parent / "packaging" / "maia3"))
-from validate_metadata import METADATA, validate as validate_maia_metadata  # noqa: E402
+from validate_metadata import (  # noqa: E402
+    METADATA,
+    validate as validate_maia_metadata,
+    validate_direct_downloads,
+)
 from validate_catalog import load_and_validate  # noqa: E402
 
 
@@ -28,8 +32,38 @@ def sha256(path: Path) -> str:
     return result.hexdigest()
 
 
+def catalog_artifact(source: dict[str, object], kind: str) -> dict[str, object]:
+    return {
+        "kind": kind,
+        "url": source["url"],
+        "byte_count": source["byte_count"],
+        "sha256": source["sha256"],
+        "format": source["format"],
+        "destination": source["destination"],
+    }
+
+
+def upstream_artifacts(
+    direct_downloads: dict[str, object], platform: str
+) -> list[dict[str, object]]:
+    packages = direct_downloads["packages"]
+    common = packages["common"]
+    variants = packages["platforms"][platform]
+    artifacts = [
+        catalog_artifact(direct_downloads["python"]["platforms"][platform], "other"),
+        catalog_artifact(direct_downloads["sources"]["maia3"], "other"),
+        catalog_artifact(direct_downloads["sources"]["chess"], "other"),
+    ]
+    for package in packages["required"]:
+        artifacts.append(catalog_artifact(common.get(package, variants.get(package)), "other"))
+    if len(artifacts) != 14:
+        raise ValueError(f"{platform} must have exactly 14 direct upstream artifacts")
+    return artifacts
+
+
 def maia_recipe(assets: Path, repository: str, tag: str) -> dict[str, object]:
     metadata = validate_maia_metadata()
+    direct_downloads = validate_direct_downloads()
     component = metadata["component"]
     runtimes = metadata["runtimes"]
     models = []
@@ -38,41 +72,45 @@ def maia_recipe(assets: Path, repository: str, tag: str) -> dict[str, object]:
         for platform, runtime in runtimes.items():
             asset = assets / runtime["asset"]
             if not asset.is_file() or asset.stat().st_size == 0:
-                raise ValueError(f"missing Maia3 runtime asset: {asset}")
+                raise ValueError(f"missing Maia3 launcher asset: {asset}")
             if asset.stat().st_size > 1024 * 1024 * 1024:
-                raise ValueError(f"Maia3 runtime asset exceeds 1 GiB: {asset}")
-            runtime_url = (
+                raise ValueError(f"Maia3 launcher asset exceeds 1 GiB: {asset}")
+            launcher_url = (
                 f"https://github.com/{repository}/releases/download/{tag}/{quote(runtime['asset'])}"
             )
             model_url = (
                 f"https://huggingface.co/{model['repository']}/resolve/"
                 f"{model['revision']}/{quote(model['filename'])}"
             )
-            executable = "package/" + runtime["executable_template"].format(model=model_id)
+            executable = "package/launcher/" + runtime["executable_template"]
+            artifacts = [
+                {
+                    "kind": "runtime",
+                    "url": launcher_url,
+                    "byte_count": asset.stat().st_size,
+                    "sha256": sha256(asset),
+                    "format": runtime["archive"],
+                    "destination": "package/launcher",
+                },
+                *upstream_artifacts(direct_downloads, platform),
+                {
+                    "kind": "model",
+                    "url": model_url,
+                    "byte_count": model["bytes"],
+                    "sha256": model["sha256"],
+                    "format": "raw",
+                    "destination": (
+                        "package/launcher/"
+                        + runtime["model_destination_template"].format(model=model_id)
+                    ),
+                },
+            ]
+            if len(artifacts) != 16:
+                raise ValueError(f"{platform} Maia3 package must have exactly 16 artifacts")
             packages.append(
                 {
                     "platform": platform,
-                    "artifacts": [
-                        {
-                            "kind": "runtime",
-                            "url": runtime_url,
-                            "byte_count": asset.stat().st_size,
-                            "sha256": sha256(asset),
-                            "format": runtime["archive"],
-                            "destination": "package",
-                        },
-                        {
-                            "kind": "model",
-                            "url": model_url,
-                            "byte_count": model["bytes"],
-                            "sha256": model["sha256"],
-                            "format": "raw",
-                            "destination": (
-                                "package/"
-                                + runtime["model_destination_template"].format(model=model_id)
-                            ),
-                        },
-                    ],
+                    "artifacts": artifacts,
                     "executable": executable,
                     "working_directory": executable.rsplit("/", 1)[0],
                 }
@@ -85,7 +123,6 @@ def maia_recipe(assets: Path, repository: str, tag: str) -> dict[str, object]:
                 "packages": packages,
             }
         )
-    source_asset = component["corresponding_source_asset"]
     notices_asset = component["notices_asset"]
     return {
         "schema": "uci-grabber-recipe/v1",
@@ -93,8 +130,8 @@ def maia_recipe(assets: Path, repository: str, tag: str) -> dict[str, object]:
         "name": "Maia3",
         "version": component["version"],
         "description": (
-            "Human-like chess UCI engines using immutable Maia3 checkpoints and a "
-            "separately distributed, offline CPU runtime."
+            "Human-like chess UCI engine assembled locally from immutable direct "
+            "upstream downloads and a selected Maia3 checkpoint."
         ),
         "publisher": {
             "name": "Computational Social Science Lab, University of Toronto",
@@ -103,7 +140,7 @@ def maia_recipe(assets: Path, repository: str, tag: str) -> dict[str, object]:
         "license": {
             "spdx": "LicenseRef-Maia3-Composite-Terms",
             "name": (
-                "Composite installation: Maia3 code under AGPL-3.0; packaged "
+                "Composite installation: Maia3 code under AGPL-3.0; direct "
                 "dependencies and checkpoints retain their respective terms"
             ),
             "url": (
@@ -111,8 +148,7 @@ def maia_recipe(assets: Path, repository: str, tag: str) -> dict[str, object]:
                 f"{quote(notices_asset)}"
             ),
             "source_url": (
-                f"https://github.com/{repository}/releases/download/{tag}/"
-                f"{quote(source_asset)}"
+                f"{component['upstream_repository']}/tree/{component['upstream_commit']}"
             ),
         },
         "homepage": "https://github.com/CSSLab/maia3",
