@@ -15,6 +15,7 @@ from review_digest import HEX_64, source_review_digest
 
 
 ROOT = Path(__file__).resolve().parent
+REPOSITORY_ROOT = ROOT.parents[1]
 CHESS_SOURCE = {
     "filename": "chess-1.11.2.tar.gz",
     "bytes": 6_131_385,
@@ -35,6 +36,10 @@ INCLUDED_PACKAGING_FILES = (
     "smoke_runtime.py",
     "validate_metadata.py",
     "verify_file.py",
+)
+INCLUDED_REPOSITORY_FILES = (
+    ".github/workflows/maia-wheelhouse-review.yml",
+    ".github/workflows/release.yml",
 )
 
 
@@ -71,6 +76,78 @@ def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def checkpoint_terms_text(models: dict[str, object]) -> str:
+    lines = []
+    for model_id, model in models.items():
+        repository = model["repository"]
+        revision = model["revision"]
+        filename = model["filename"]
+        lines.extend(
+            [
+                f"  {model_id}",
+                f"    Repository: https://huggingface.co/{repository}",
+                f"    Reviewed revision: {revision}",
+                (
+                    "    Pinned model card / terms source: "
+                    f"https://huggingface.co/{repository}/blob/{revision}/README.md"
+                ),
+                (
+                    "    Checkpoint download: "
+                    f"https://huggingface.co/{repository}/resolve/{revision}/{filename}"
+                ),
+                f"    Bytes: {model['bytes']}",
+                f"    SHA-256: {model['sha256']}",
+            ]
+        )
+    return "\n".join(lines)
+
+
+def notice_text(metadata: dict[str, object], review_digest: str, license_text: str) -> str:
+    component = metadata["component"]
+    source_asset = component["corresponding_source_asset"]
+    checkpoints = checkpoint_terms_text(metadata["models"])
+    return f"""UCI Grabber separately distributed Maia3 component notices
+===========================================================
+
+The optional model-free runtime is not part of the Apache-2.0 UCI Grabber
+application. It runs Maia3 through a UCI process boundary.
+
+Maia3
+  Project: {component['upstream_repository']}
+  Reviewed commit: {component['upstream_commit']}
+  Version: 0.1.0
+  License: GNU Affero General Public License v3.0
+  Reviewed source/build archive: {source_asset}
+  Availability: same GitHub release as every Maia3 runtime archive, without
+                additional charge
+
+The signed catalog's Source link points directly to the exact same-tag
+{source_asset} asset. The archive contains the exact Maia3 checkout, chess
+1.11.2 source, UCI Grabber's component build definitions, and the release
+workflows that control them. It does not automatically carry source archives
+for CPython, PyTorch, NumPy, PyInstaller, or every transitive wheel. Publication
+is separately gated on the digest-bound written review in
+corresponding-source-policy.json; that review identifies any additional source
+archives or durable offers required for a given release.
+This notice records the release materials and review result; it is not a legal
+conclusion about the classification of every packaged dependency.
+
+Reviewed source/build-and-wheel digest: {review_digest}
+
+Checkpoint bytes are downloaded directly from immutable Hugging Face revisions
+and are not UCI Grabber release assets. UCI Grabber does not relicense them.
+The exact model-card pages reviewed for checkpoint download, use, and
+redistribution are listed below alongside the pinned bytes:
+
+{checkpoints}
+
+Complete Maia3 license text
+---------------------------
+
+{license_text.rstrip()}
+"""
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--upstream", type=Path, required=True)
@@ -85,6 +162,12 @@ def main() -> None:
         parser.error("output paths must not already exist")
     if HEX_64.fullmatch(args.source_review_digest) is None:
         parser.error("--source-review-digest must be lowercase SHA-256")
+    if args.output.name != component["corresponding_source_asset"]:
+        parser.error(
+            "output filename must match the reviewed corresponding-source release asset"
+        )
+    if args.notices.name != component["notices_asset"]:
+        parser.error("notices filename must match the reviewed composite notice asset")
     if not (args.upstream / "LICENSE").is_file() or not (args.upstream / "maia3").is_dir():
         parser.error("upstream path is not a complete Maia3 checkout")
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -105,7 +188,7 @@ def main() -> None:
         "python": "CPython 3.12.10",
         "torch": "2.11.0 CPU wheel from https://download.pytorch.org/whl/cpu",
         "models_included": False,
-        "build_definitions": "uci-grabber-packaging/",
+        "build_definitions": "uci-grabber-packaging/ and uci-grabber-repository/",
         "per_platform_wheel_hashes": "WHEELHOUSE.lock.json in each runtime",
         "source_material_scope": (
             "Maia3, chess 1.11.2, and build definitions are included; see "
@@ -134,6 +217,16 @@ def main() -> None:
                 recursive=False,
                 filter=normalized,
             )
+        for filename in INCLUDED_REPOSITORY_FILES:
+            path = REPOSITORY_ROOT / filename
+            if not path.is_file():
+                raise ValueError(f"missing repository build input: {path}")
+            archive.add(
+                path,
+                arcname=f"maia3-source/uci-grabber-repository/{filename}",
+                recursive=False,
+                filter=normalized,
+            )
         for source in args.dependency_source:
             archive.add(
                 source,
@@ -152,37 +245,7 @@ def main() -> None:
             zipped.write(raw.read())
 
     upstream_license = (args.upstream / "LICENSE").read_text(encoding="utf-8")
-    notices = f"""UCI Grabber separately distributed Maia3 component notices
-===========================================================
-
-The optional model-free runtime is not part of the Apache-2.0 UCI Grabber
-application. It runs Maia3 through a UCI process boundary.
-
-Maia3
-  Project: {component['upstream_repository']}
-  Reviewed commit: {component['upstream_commit']}
-  Version: 0.1.0
-  License: GNU Affero General Public License v3.0
-  Source/build materials: maia3-corresponding-source.tar.gz in the same release
-
-The source/build archive contains the exact Maia3 checkout, chess 1.11.2 source,
-and UCI Grabber's component build definitions. It does not automatically carry
-source archives for CPython, PyTorch, NumPy, PyInstaller, or every transitive
-wheel. Publication is separately gated on the digest-bound written review in
-corresponding-source-policy.json; that review determines whether additional
-source archives or durable offers are required for a given release.
-
-Reviewed source/build-and-wheel digest: {args.source_review_digest}
-
-Checkpoint bytes are downloaded directly from immutable Hugging Face revisions
-and are not UCI Grabber release assets. See the signed recipe for repository,
-revision, byte count, digest, and reviewed terms.
-
-Complete Maia3 license text
----------------------------
-
-{upstream_license.rstrip()}
-"""
+    notices = notice_text(metadata, args.source_review_digest, upstream_license)
     args.notices.write_text(notices, encoding="utf-8", newline="\n")
 
 

@@ -19,9 +19,9 @@ ROOT = Path(__file__).resolve().parent
 
 
 def decode_signature(raw: bytes) -> bytes:
+    if len(raw) == 64:
+        return raw
     trimmed = raw.strip()
-    if len(trimmed) == 64:
-        return trimmed
     if len(trimmed) == 128 and re.fullmatch(rb"[0-9A-Fa-f]{128}", trimmed):
         return bytes.fromhex(trimmed.decode("ascii"))
     try:

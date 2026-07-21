@@ -87,8 +87,12 @@ struct RemoveArgs {
 }
 
 fn main() {
+    let graphical_launch = std::env::args_os().len() == 1;
     if let Err(error) = run() {
         eprintln!("UCI Grabber: {error}");
+        if graphical_launch {
+            app::show_startup_error(&error);
+        }
         std::process::exit(1);
     }
 }

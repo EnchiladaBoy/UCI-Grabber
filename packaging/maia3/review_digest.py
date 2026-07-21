@@ -11,8 +11,10 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent
+REPOSITORY_ROOT = ROOT.parents[1]
 HEX_64 = re.compile(r"^[0-9a-f]{64}$")
 SOURCE_REVIEW_FILES = (
+    "README.md",
     "build_runtime.py",
     "build_wheel_lock.py",
     "component-metadata.json",
@@ -26,6 +28,10 @@ SOURCE_REVIEW_FILES = (
     "smoke_runtime.py",
     "validate_metadata.py",
     "verify_file.py",
+)
+SOURCE_REVIEW_REPOSITORY_FILES = (
+    ".github/workflows/maia-wheelhouse-review.yml",
+    ".github/workflows/release.yml",
 )
 WHEELHOUSE_PLATFORMS = (
     "windows-x86_64",
@@ -44,9 +50,17 @@ def file_digest(path: Path) -> str:
 
 
 def source_review_digest() -> str:
-    result = hashlib.sha256(b"uci-grabber-maia3-source-review-v1\0")
+    result = hashlib.sha256(b"uci-grabber-maia3-source-review-v2\0")
     for relative in SOURCE_REVIEW_FILES:
         path = ROOT / relative
+        if not path.is_file():
+            raise ValueError(f"source-review input is missing: {relative}")
+        label = f"packaging/maia3/{relative}"
+        result.update(label.encode("utf-8"))
+        result.update(b"\0")
+        result.update(bytes.fromhex(file_digest(path)))
+    for relative in SOURCE_REVIEW_REPOSITORY_FILES:
+        path = REPOSITORY_ROOT / relative
         if not path.is_file():
             raise ValueError(f"source-review input is missing: {relative}")
         result.update(relative.encode("utf-8"))
@@ -75,7 +89,7 @@ def parse_wheelhouses(values: list[str]) -> dict[str, str]:
 def source_release_review_digest(wheelhouses: dict[str, str]) -> str:
     if set(wheelhouses) != set(WHEELHOUSE_PLATFORMS):
         raise ValueError("source release review requires all four wheelhouse digests")
-    result = hashlib.sha256(b"uci-grabber-maia3-source-release-review-v2\0")
+    result = hashlib.sha256(b"uci-grabber-maia3-source-release-review-v3\0")
     result.update(bytes.fromhex(source_review_digest()))
     for platform in WHEELHOUSE_PLATFORMS:
         digest = wheelhouses[platform]

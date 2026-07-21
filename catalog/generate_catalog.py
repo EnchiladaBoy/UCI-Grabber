@@ -85,7 +85,8 @@ def maia_recipe(assets: Path, repository: str, tag: str) -> dict[str, object]:
                 "packages": packages,
             }
         )
-    commit = component["upstream_commit"]
+    source_asset = component["corresponding_source_asset"]
+    notices_asset = component["notices_asset"]
     return {
         "schema": "uci-grabber-recipe/v1",
         "id": "maia3",
@@ -100,10 +101,19 @@ def maia_recipe(assets: Path, repository: str, tag: str) -> dict[str, object]:
             "url": "https://github.com/CSSLab",
         },
         "license": {
-            "spdx": "LicenseRef-Maia3-Runtime-And-Checkpoint",
-            "name": "AGPL-3.0 runtime and separately reviewed checkpoint terms",
-            "url": f"https://github.com/CSSLab/maia3/blob/{commit}/LICENSE",
-            "source_url": f"https://github.com/CSSLab/maia3/tree/{commit}",
+            "spdx": "LicenseRef-Maia3-Composite-Terms",
+            "name": (
+                "Composite installation: Maia3 code under AGPL-3.0; packaged "
+                "dependencies and checkpoints retain their respective terms"
+            ),
+            "url": (
+                f"https://github.com/{repository}/releases/download/{tag}/"
+                f"{quote(notices_asset)}"
+            ),
+            "source_url": (
+                f"https://github.com/{repository}/releases/download/{tag}/"
+                f"{quote(source_asset)}"
+            ),
         },
         "homepage": "https://github.com/CSSLab/maia3",
         "minimum_fisheye_version": component["minimum_fisheye_version"],

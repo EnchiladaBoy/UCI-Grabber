@@ -64,7 +64,8 @@ def main() -> None:
             timeout=args.timeout,
             check=False,
         )
-    required = ("id name Maia3", "uciok", "readyok", "bestmove ")
+    variant_name = f"Maia3 {args.model.removeprefix('maia3-').upper()}"
+    required = (f"id name {variant_name}", "uciok", "readyok", "bestmove ")
     missing = [token for token in required if token not in process.stdout]
     if process.returncode != 0 or missing:
         raise SystemExit(

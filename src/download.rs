@@ -15,6 +15,18 @@ pub const MAX_OTHER_DOWNLOAD_BYTES: u64 = 1024 * 1024 * 1024;
 
 pub trait Downloader: Send + Sync {
     fn download(&self, artifact: &Artifact, destination: &Path, cancel: &AtomicBool) -> Result<()>;
+
+    fn download_with_progress(
+        &self,
+        artifact: &Artifact,
+        destination: &Path,
+        cancel: &AtomicBool,
+        progress: &(dyn Fn(u64, u64) + Send + Sync),
+    ) -> Result<()> {
+        self.download(artifact, destination, cancel)?;
+        progress(artifact.byte_count, artifact.byte_count);
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -38,6 +50,28 @@ impl HttpDownloader {
 
 impl Downloader for HttpDownloader {
     fn download(&self, artifact: &Artifact, destination: &Path, cancel: &AtomicBool) -> Result<()> {
+        self.download_impl(artifact, destination, cancel, &|_, _| {})
+    }
+
+    fn download_with_progress(
+        &self,
+        artifact: &Artifact,
+        destination: &Path,
+        cancel: &AtomicBool,
+        progress: &(dyn Fn(u64, u64) + Send + Sync),
+    ) -> Result<()> {
+        self.download_impl(artifact, destination, cancel, progress)
+    }
+}
+
+impl HttpDownloader {
+    fn download_impl(
+        &self,
+        artifact: &Artifact,
+        destination: &Path,
+        cancel: &AtomicBool,
+        progress: &(dyn Fn(u64, u64) + Send + Sync),
+    ) -> Result<()> {
         let configured_limit = match artifact.kind {
             ArtifactKind::Runtime => MAX_RUNTIME_DOWNLOAD_BYTES,
             ArtifactKind::Model => MAX_MODEL_DOWNLOAD_BYTES,
@@ -96,6 +130,7 @@ impl Downloader for HttpDownloader {
         let mut reader = response.body_mut().as_reader();
         let mut digest = Sha256::new();
         let mut total = 0_u64;
+        let mut last_reported = 0_u64;
         let mut buffer = vec![0_u8; 64 * 1024];
         loop {
             if cancel.load(Ordering::Relaxed) {
@@ -118,6 +153,10 @@ impl Downloader for HttpDownloader {
             writer
                 .write_all(&buffer[..read])
                 .map_err(|source| Error::io(destination, source))?;
+            if total == artifact.byte_count || total.saturating_sub(last_reported) >= 512 * 1024 {
+                progress(total, artifact.byte_count);
+                last_reported = total;
+            }
         }
         writer
             .flush()

@@ -69,14 +69,21 @@ def validate_source_policy() -> None:
         == {
             "default": "blocked_pending_written_corresponding_source_review",
             "gate_environment": "MAIA3_CORRESPONDING_SOURCE_REVIEW",
-            "gate_value": "sha256(source-release-review-v2: source inputs plus four reviewed wheelhouse digests; see review_digest.py)",
+            "gate_value": "sha256(source-release-review-v3: source-review-v2 inputs plus four reviewed wheelhouse digests; see review_digest.py)",
         },
         "corresponding-source publication must remain fail-closed",
     )
     distribution = policy["distribution"]
     require(
         set(distribution)
-        == {"form", "agpl_component", "included_source_materials", "not_bundled_as_source"},
+        == {
+            "form",
+            "agpl_component",
+            "corresponding_source_asset",
+            "corresponding_source_availability",
+            "included_source_materials",
+            "not_bundled_as_source",
+        },
         "source policy distribution has unknown or missing fields",
     )
     require(
@@ -84,6 +91,15 @@ def validate_source_policy() -> None:
             "1e13597c42d4858b7cfd7cfdae01e297263364b2"
         ),
         "source policy must bind the reviewed Maia3 commit",
+    )
+    require(
+        distribution["corresponding_source_asset"] == "maia3-corresponding-source.tar.gz",
+        "source policy must name the immutable release source asset",
+    )
+    require(
+        "same GitHub release" in distribution["corresponding_source_availability"]
+        and "without additional charge" in distribution["corresponding_source_availability"],
+        "source policy must require same-release source availability",
     )
     require(
         distribution["not_bundled_as_source"]
@@ -94,6 +110,16 @@ def validate_source_policy() -> None:
             "PyInstaller 6.21.0 bootloader and other reviewed wheel dependencies",
         ],
         "source policy must enumerate source materials not bundled by default",
+    )
+    require(
+        distribution["included_source_materials"]
+        == [
+            "exact Maia3 upstream checkout",
+            "exact chess 1.11.2 source distribution",
+            "UCI Grabber Maia3 build and packaging definitions",
+            "exact UCI Grabber release and wheelhouse-review workflow definitions",
+        ],
+        "source policy must enumerate every digest-bound source/build input class",
     )
     review = policy["required_written_review"]
     require(
@@ -116,7 +142,7 @@ def validate() -> dict[str, object]:
     require(
         publication
         == {
-            "default": "excluded_pending_checkpoint_terms_review",
+            "default": "excluded_pending_checkpoint_download_use_redistribution_review",
             "gate_environment": "MAIA3_MODEL_LICENSE_REVIEW",
             "gate_value": "sha256(component-metadata.json)",
         },
@@ -131,13 +157,15 @@ def validate() -> dict[str, object]:
             "minimum_fisheye_version",
             "upstream_repository",
             "upstream_commit",
+            "corresponding_source_asset",
+            "notices_asset",
         },
         "component has unknown or missing fields",
     )
     require(VERSION.fullmatch(component["version"]) is not None, "invalid component version")
     require(
-        VERSION.fullmatch(component["minimum_fisheye_version"]) is not None,
-        "invalid minimum FishEye version",
+        component["minimum_fisheye_version"] == "1.8.0",
+        "FishEye CLI handoff requires FishEye 1.8.0 or newer",
     )
     require(
         component["upstream_repository"] == "https://github.com/CSSLab/maia3",
@@ -147,6 +175,11 @@ def validate() -> dict[str, object]:
         HEX_40.fullmatch(component["upstream_commit"]) is not None,
         "upstream commit must be an immutable full SHA-1",
     )
+    require(
+        component["corresponding_source_asset"] == "maia3-corresponding-source.tar.gz",
+        "unexpected corresponding-source asset name",
+    )
+    require(component["notices_asset"] == "MAIA3-NOTICES.txt", "unexpected notices asset name")
 
     runtimes = data["runtimes"]
     require(set(runtimes) == set(EXPECTED_PLATFORMS), "runtime platform set changed")

@@ -12,7 +12,7 @@ use crate::download::{Downloader, HttpDownloader, sha256_file};
 use crate::registry::{
     INSTALL_RECORD_FILE, InstallRecord, InstallSource, Integrity, RegistryStore, package_snapshot,
 };
-use crate::schema::{ArchiveFormat, Artifact, Package, Recipe, current_platform};
+use crate::schema::{ArchiveFormat, Artifact, ArtifactKind, Package, Recipe, current_platform};
 use crate::uci::{ValidationTimeouts, validate_engine_with_cancel};
 use crate::{Error, Result, extract};
 
@@ -39,6 +39,24 @@ impl Default for InstallOptions {
 pub struct Installer {
     store: RegistryStore,
     downloader: Arc<dyn Downloader>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InstallPhase {
+    Downloading,
+    Verifying,
+    Extracting,
+    ValidatingUci,
+    Activating,
+    Ready,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct InstallProgress {
+    pub phase: InstallPhase,
+    pub artifact_kind: Option<ArtifactKind>,
+    pub completed_bytes: u64,
+    pub total_bytes: u64,
 }
 
 impl std::fmt::Debug for Installer {
@@ -74,6 +92,19 @@ impl Installer {
         options: &InstallOptions,
         cancel: &AtomicBool,
     ) -> Result<InstallRecord> {
+        self.install_with_progress(recipe, model_id, options, cancel, &|_| {})
+    }
+
+    /// Downloads, verifies, validates, and atomically activates one immutable
+    /// package while reporting progress to interactive frontends.
+    pub fn install_with_progress(
+        &self,
+        recipe: &Recipe,
+        model_id: &str,
+        options: &InstallOptions,
+        cancel: &AtomicBool,
+        progress: &(dyn Fn(InstallProgress) + Send + Sync),
+    ) -> Result<InstallRecord> {
         recipe.validate()?;
         if options.source == InstallSource::UnreviewedRecipe && !options.approve_unreviewed {
             return Err(Error::InvalidRecipe(
@@ -91,6 +122,9 @@ impl Installer {
             .find(|package| package.platform == platform)
             .ok_or_else(|| Error::UnsupportedPlatform(platform.to_owned()))?;
         validate_destination_collisions(package)?;
+        let total_bytes = package.artifacts.iter().fold(0_u64, |total, artifact| {
+            total.saturating_add(artifact.byte_count)
+        });
         let recipe_sha256 = format!("{:x}", Sha256::digest(serde_json::to_vec(recipe)?));
 
         let generation = self
@@ -119,7 +153,15 @@ impl Installer {
                 )));
             }
             return match RegistryStore::integrity(&record)? {
-                Integrity::Verified => Ok(record),
+                Integrity::Verified => {
+                    progress(InstallProgress {
+                        phase: InstallPhase::Ready,
+                        artifact_kind: None,
+                        completed_bytes: total_bytes,
+                        total_bytes,
+                    });
+                    Ok(record)
+                }
                 Integrity::Missing | Integrity::Changed { .. } => Err(Error::Other(format!(
                     "immutable generation exists but failed integrity verification: {}",
                     generation.display()
@@ -149,6 +191,8 @@ impl Installer {
             &recipe_sha256,
             options,
             cancel,
+            total_bytes,
+            progress,
         );
         if result.is_err() && staging.exists() {
             let _ = fs::remove_dir_all(&staging);
@@ -170,16 +214,55 @@ impl Installer {
         recipe_sha256: &str,
         options: &InstallOptions,
         cancel: &AtomicBool,
+        total_bytes: u64,
+        progress: &(dyn Fn(InstallProgress) + Send + Sync),
     ) -> Result<InstallRecord> {
         let downloads = staging.join(".downloads");
         fs::create_dir(&downloads).map_err(|source| Error::io(&downloads, source))?;
         let mut extraction_budget = extract::ExtractionBudget::for_generation();
+        let mut completed_bytes = 0_u64;
         for (index, artifact) in package.artifacts.iter().enumerate() {
             check_cancel(cancel)?;
             let downloaded = downloads.join(format!("artifact-{index}.part"));
-            self.downloader.download(artifact, &downloaded, cancel)?;
+            report_progress(
+                progress,
+                InstallPhase::Downloading,
+                Some(artifact.kind),
+                completed_bytes,
+                total_bytes,
+            );
+            let completed_before_artifact = completed_bytes;
+            self.downloader.download_with_progress(
+                artifact,
+                &downloaded,
+                cancel,
+                &|downloaded_bytes, _artifact_bytes| {
+                    report_progress(
+                        progress,
+                        InstallPhase::Downloading,
+                        Some(artifact.kind),
+                        completed_before_artifact.saturating_add(downloaded_bytes),
+                        total_bytes,
+                    );
+                },
+            )?;
+            completed_bytes = completed_bytes.saturating_add(artifact.byte_count);
             check_cancel(cancel)?;
+            report_progress(
+                progress,
+                InstallPhase::Verifying,
+                Some(artifact.kind),
+                completed_bytes,
+                total_bytes,
+            );
             independently_verify_download(artifact, &downloaded)?;
+            report_progress(
+                progress,
+                InstallPhase::Extracting,
+                Some(artifact.kind),
+                completed_bytes,
+                total_bytes,
+            );
             extract::materialize(artifact, &downloaded, staging, &mut extraction_budget)?;
             check_cancel(cancel)?;
             fs::remove_file(&downloaded).map_err(|source| Error::io(&downloaded, source))?;
@@ -195,6 +278,13 @@ impl Installer {
         let snapshot = package_snapshot(staging)?;
         make_executable(&executable)?;
         check_cancel(cancel)?;
+        report_progress(
+            progress,
+            InstallPhase::ValidatingUci,
+            None,
+            total_bytes,
+            total_bytes,
+        );
         validate_engine_with_cancel(
             &executable,
             &working_directory,
@@ -207,6 +297,13 @@ impl Installer {
                 "staged package changed during UCI validation".into(),
             ));
         }
+        report_progress(
+            progress,
+            InstallPhase::Activating,
+            None,
+            total_bytes,
+            total_bytes,
+        );
         let executable_sha256 = sha256_file(&executable)?;
         let relative_executable = executable
             .strip_prefix(staging)
@@ -253,6 +350,13 @@ impl Installer {
                 .ok_or_else(|| Error::Other("generation has no parent".into()))?,
         )?;
         self.store.add(record.clone())?;
+        report_progress(
+            progress,
+            InstallPhase::Ready,
+            None,
+            total_bytes,
+            total_bytes,
+        );
         Ok(record)
     }
 
@@ -275,7 +379,8 @@ impl Installer {
                 report.cleaned_staging += 1;
             } else if path.is_file() && name == INSTALL_RECORD_FILE {
                 let bytes = fs::read(path).map_err(|source| Error::io(path, source))?;
-                let record: InstallRecord = serde_json::from_slice(&bytes)?;
+                let mut record: InstallRecord = serde_json::from_slice(&bytes)?;
+                self.store.rebase_portable_record(&mut record)?;
                 validate_recovered_record(&installs, path, &record)?;
                 records.push(record);
             }
@@ -328,6 +433,21 @@ fn independently_verify_download(artifact: &Artifact, path: &Path) -> Result<()>
         });
     }
     Ok(())
+}
+
+fn report_progress(
+    callback: &(dyn Fn(InstallProgress) + Send + Sync),
+    phase: InstallPhase,
+    artifact_kind: Option<ArtifactKind>,
+    completed_bytes: u64,
+    total_bytes: u64,
+) {
+    callback(InstallProgress {
+        phase,
+        artifact_kind,
+        completed_bytes: completed_bytes.min(total_bytes),
+        total_bytes,
+    });
 }
 
 fn check_cancel(cancel: &AtomicBool) -> Result<()> {
@@ -503,6 +623,7 @@ fn validate_recovered_record(
 #[cfg(test)]
 mod tests {
     use std::io::Write as _;
+    use std::sync::Mutex;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     use sha2::{Digest as _, Sha256};
@@ -538,12 +659,13 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn installs_and_registers_fake_engine_immutably() {
-        let script = b"#!/bin/sh\nwhile IFS= read -r line; do\ncase \"$line\" in\nuci) printf 'id name Installed Fixture\\nuciok\\n';;\nisready) printf 'readyok\\n';;\n'go depth 1') printf 'bestmove e2e4\\n';;\nquit) exit 0;;\nesac\ndone\n".to_vec();
-        let digest = format!("{:x}", Sha256::digest(&script));
-        let platform = current_platform().unwrap().to_owned();
-        let recipe = Recipe {
+    fn fixture_script() -> Vec<u8> {
+        b"#!/bin/sh\nwhile IFS= read -r line; do\ncase \"$line\" in\nuci) printf 'id name Installed Fixture\\nuciok\\n';;\nisready) printf 'readyok\\n';;\n'go depth 1') printf 'bestmove e2e4\\n';;\nquit) exit 0;;\nesac\ndone\n".to_vec()
+    }
+
+    #[cfg(unix)]
+    fn fixture_recipe(script: &[u8], platform: &str) -> Recipe {
+        Recipe {
             schema: RECIPE_SCHEMA.into(),
             id: "fixture-engine".into(),
             name: "Fixture Engine".into(),
@@ -566,12 +688,12 @@ mod tests {
                 name: "Small".into(),
                 description: "Fixture".into(),
                 packages: vec![Package {
-                    platform: platform.clone(),
+                    platform: platform.into(),
                     artifacts: vec![Artifact {
                         kind: ArtifactKind::Runtime,
                         url: "https://example.test/engine".into(),
                         byte_count: script.len() as u64,
-                        sha256: digest,
+                        sha256: format!("{:x}", Sha256::digest(script)),
                         format: ArchiveFormat::Raw,
                         destination: "engine".into(),
                     }],
@@ -579,7 +701,15 @@ mod tests {
                     working_directory: ".".into(),
                 }],
             }],
-        };
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn installs_and_registers_fake_engine_immutably() {
+        let script = fixture_script();
+        let platform = current_platform().unwrap().to_owned();
+        let recipe = fixture_recipe(&script, &platform);
         let temporary = tempfile::tempdir().unwrap();
         let calls = Arc::new(AtomicUsize::new(0));
         let installer = Installer::new(
@@ -594,10 +724,36 @@ mod tests {
             platform: Some(platform),
             ..InstallOptions::default()
         };
+        let updates = Mutex::new(Vec::new());
         let record = installer
-            .install(&recipe, "small", &options, &AtomicBool::new(false))
+            .install_with_progress(
+                &recipe,
+                "small",
+                &options,
+                &AtomicBool::new(false),
+                &|progress| updates.lock().unwrap().push(progress),
+            )
             .unwrap();
         assert!(record.executable.is_file());
+        let phases: Vec<_> = updates
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|progress| progress.phase)
+            .collect();
+        for expected in [
+            InstallPhase::Downloading,
+            InstallPhase::Verifying,
+            InstallPhase::Extracting,
+            InstallPhase::ValidatingUci,
+            InstallPhase::Activating,
+            InstallPhase::Ready,
+        ] {
+            assert!(
+                phases.contains(&expected),
+                "missing progress phase {expected:?}"
+            );
+        }
         assert_eq!(installer.store.load().unwrap().installs.len(), 1);
         let again = installer
             .install(&recipe, "small", &options, &AtomicBool::new(false))
@@ -629,6 +785,58 @@ mod tests {
             RegistryStore::integrity(&record).unwrap(),
             Integrity::Changed { .. }
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn moving_the_portable_tree_rebases_registry_and_recovery_paths() {
+        let temporary = tempfile::tempdir().unwrap();
+        let original_bundle = temporary.path().join("original");
+        let original_data = original_bundle.join("UCI-Grabber-Data");
+        let script = fixture_script();
+        let platform = current_platform().unwrap().to_owned();
+        let recipe = fixture_recipe(&script, &platform);
+        let installer = Installer::new(
+            RegistryStore::new_portable(&original_data),
+            Arc::new(FixtureDownloader {
+                bytes: script,
+                calls: None,
+            }),
+        );
+        installer
+            .install(
+                &recipe,
+                "small",
+                &InstallOptions {
+                    approve_unreviewed: true,
+                    platform: Some(platform),
+                    ..InstallOptions::default()
+                },
+                &AtomicBool::new(false),
+            )
+            .unwrap();
+
+        let moved_bundle = temporary.path().join("moved");
+        std::fs::rename(&original_bundle, &moved_bundle).unwrap();
+        let moved_store = RegistryStore::new_portable(moved_bundle.join("UCI-Grabber-Data"));
+        let moved_installer = Installer::new(
+            moved_store.clone(),
+            Arc::new(FixtureDownloader {
+                bytes: Vec::new(),
+                calls: None,
+            }),
+        );
+        moved_installer.recover().unwrap();
+        let records = moved_store.load().unwrap().installs;
+        assert_eq!(records.len(), 1);
+        let record = &records[0];
+        assert!(record.generation_root.starts_with(&moved_bundle));
+        assert_eq!(record.working_directory, record.generation_root);
+        assert!(record.executable.is_file());
+        assert_eq!(
+            RegistryStore::integrity(record).unwrap(),
+            Integrity::Verified
+        );
     }
 
     #[test]

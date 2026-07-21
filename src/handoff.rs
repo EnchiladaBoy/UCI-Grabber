@@ -21,6 +21,9 @@ pub fn open_in_fisheye(engine: &Path, explicit_fisheye: Option<&Path>) -> Result
         })
 }
 
+/// Locates `FishEye` for an optional handoff. Finding or launching `FishEye` never
+/// changes its settings: [`open_in_fisheye`] only opens `FishEye`'s own external
+/// engine review flow.
 pub fn find_fisheye(explicit: Option<&Path>) -> Result<PathBuf> {
     if let Some(path) = explicit {
         return executable_candidate(path).ok_or_else(|| {
@@ -49,8 +52,13 @@ pub fn find_fisheye(explicit: Option<&Path>) -> Result<PathBuf> {
             }
         }
     }
+    for candidate in platform_candidates() {
+        if let Some(path) = executable_candidate(&candidate) {
+            return Ok(path);
+        }
+    }
     Err(Error::Other(
-        "FishEye was not found; use --fisheye, set FISHEYE_PATH, or copy the engine path".into(),
+        "FishEye was not found; select its executable, use --fisheye, or set FISHEYE_PATH".into(),
     ))
 }
 
@@ -73,7 +81,45 @@ pub fn reveal(path: &Path) -> Result<Child> {
 }
 
 fn executable_candidate(path: &Path) -> Option<PathBuf> {
-    path.is_file().then(|| path.to_path_buf())
+    if path.is_file() {
+        return Some(path.to_path_buf());
+    }
+    #[cfg(target_os = "macos")]
+    if path.is_dir() && path.extension().is_some_and(|extension| extension == "app") {
+        let executable = path.join("Contents/MacOS/fisheye");
+        if executable.is_file() {
+            return Some(executable);
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "windows")]
+fn platform_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    for variable in ["LOCALAPPDATA", "ProgramFiles", "ProgramFiles(x86)"] {
+        if let Some(root) = env::var_os(variable) {
+            candidates.push(PathBuf::from(root).join("FishEye/fisheye.exe"));
+        }
+    }
+    candidates
+}
+
+#[cfg(target_os = "macos")]
+fn platform_candidates() -> Vec<PathBuf> {
+    let mut candidates = vec![PathBuf::from("/Applications/FishEye.app")];
+    if let Some(home) = env::var_os("HOME") {
+        candidates.push(PathBuf::from(home).join("Applications/FishEye.app"));
+    }
+    candidates
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn platform_candidates() -> Vec<PathBuf> {
+    vec![
+        PathBuf::from("/usr/local/bin/fisheye"),
+        PathBuf::from("/usr/bin/fisheye"),
+    ]
 }
 
 #[cfg(target_os = "windows")]

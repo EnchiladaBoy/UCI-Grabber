@@ -14,6 +14,7 @@ from pathlib import Path, PurePosixPath
 
 
 FIXED_ZIP_TIME = (2020, 1, 1, 0, 0, 0)
+PORTABLE_MARKER = b"UCI Grabber portable release\n"
 VERSION = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
 PLATFORMS = {
     "windows-x86_64",
@@ -48,6 +49,7 @@ def payload(
     license_file: Path,
     readme: Path,
     third_party: Path,
+    gui_binary: Path | None = None,
 ) -> list[tuple[str, bytes, int]]:
     documents = {
         "LICENSE": license_file.read_bytes(),
@@ -62,11 +64,22 @@ def payload(
         ]
         result.extend((f"{root}/Resources/{name}", contents, 0o644)
                       for name, contents in documents.items())
+        result.append((f"{root}/Resources/portable.flag", PORTABLE_MARKER, 0o644))
         return result
     root = f"uci-grabber-{version}"
-    executable = "uci-grabber.exe" if platform == "windows-x86_64" else "uci-grabber"
-    result = [(f"{root}/{executable}", binary.read_bytes(), 0o755)]
+    if platform == "windows-x86_64":
+        if gui_binary is None:
+            raise ValueError("the Windows portable package requires a GUI binary")
+        result = [
+            (f"{root}/UCI-Grabber.exe", gui_binary.read_bytes(), 0o755),
+            (f"{root}/uci-grabber-cli.exe", binary.read_bytes(), 0o755),
+        ]
+    else:
+        if gui_binary is not None:
+            raise ValueError("a separate GUI binary is supported only for Windows")
+        result = [(f"{root}/uci-grabber", binary.read_bytes(), 0o755)]
     result.extend((f"{root}/{name}", contents, 0o644) for name, contents in documents.items())
+    result.append((f"{root}/portable.flag", PORTABLE_MARKER, 0o644))
     return result
 
 
@@ -126,6 +139,7 @@ def main() -> None:
     parser.add_argument("--platform", choices=sorted(PLATFORMS), required=True)
     parser.add_argument("--version", required=True)
     parser.add_argument("--binary", type=Path, required=True)
+    parser.add_argument("--gui-binary", type=Path)
     parser.add_argument("--license", dest="license_file", type=Path, required=True)
     parser.add_argument("--readme", type=Path, required=True)
     parser.add_argument("--third-party", type=Path, required=True)
@@ -133,7 +147,14 @@ def main() -> None:
     args = parser.parse_args()
     if VERSION.fullmatch(args.version) is None:
         parser.error("version must use MAJOR.MINOR.PATCH")
-    for path in (args.binary, args.license_file, args.readme, args.third_party):
+    required_paths = [args.binary, args.license_file, args.readme, args.third_party]
+    if args.platform == "windows-x86_64":
+        if args.gui_binary is None:
+            parser.error("Windows packaging requires --gui-binary")
+        required_paths.append(args.gui_binary)
+    elif args.gui_binary is not None:
+        parser.error("--gui-binary is supported only for Windows packaging")
+    for path in required_paths:
         if not path.is_file() or path.stat().st_size == 0:
             parser.error(f"required input is missing or empty: {path}")
     if args.output.exists():
@@ -143,7 +164,13 @@ def main() -> None:
         parser.error(f"{args.platform} output must end in {expected_suffix}")
     args.output.parent.mkdir(parents=True, exist_ok=True)
     files = payload(
-        args.platform, args.version, args.binary, args.license_file, args.readme, args.third_party
+        args.platform,
+        args.version,
+        args.binary,
+        args.license_file,
+        args.readme,
+        args.third_party,
+        args.gui_binary,
     )
     if expected_suffix == ".zip":
         create_zip(args.output, files)

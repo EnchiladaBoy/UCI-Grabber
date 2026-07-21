@@ -1,0 +1,15 @@
+# Keep the signed catalog and its key material byte-stable on every platform.
+/catalog/catalog.json text eol=lf
+/catalog/catalog.pub text eol=lf
+/catalog/catalog-public-key.pem text eol=lf
+/catalog/catalog.sig binary
+
+# Review gates hash these exact worktree bytes. Keep their digests portable
+# between maintainer checkouts and the Linux release runner.
+/packaging/maia3/*.py text eol=lf
+/packaging/maia3/*.json text eol=lf
+/packaging/maia3/*.md text eol=lf
+/packaging/maia3/*.spec text eol=lf
+/packaging/maia3/*.txt text eol=lf
+/.github/workflows/maia-wheelhouse-review.yml text eol=lf
+/.github/workflows/release.yml text eol=lf

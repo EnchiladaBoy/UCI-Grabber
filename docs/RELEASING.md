@@ -1,10 +1,11 @@
 # Release and compliance gates
 
 UCI Grabber application packages contain the Apache-2.0 Rust application and
-compatible dependency notices only. The optional Maia3 native runtime is a
-separate AGPL component and must be published as separate assets with notices,
-build provenance, reviewed source/build materials, a written
-Corresponding-Source determination, and platform signatures.
+compatible dependency notices only. The separately distributed Maia3 native runtime contains
+Maia3 code offered upstream under AGPL-3.0 and packaged dependencies under their
+respective terms. It must be published as separate assets with notices, build
+provenance, reviewed source/build materials, a written Corresponding-Source
+determination, and checksums.
 Checkpoint bytes are fetched directly from their immutable Hugging Face
 revisions; they are never bundled in UCI Grabber application or GitHub release
 assets.
@@ -14,12 +15,19 @@ Every stable tag builds `uci-grabber-windows-x86_64.zip`,
 package contains the Apache license, README, and a `cargo-about` notice
 inventory generated from the locked dependency graph.
 
-The v1 application archives are checksummed release assets but are not yet
-Authenticode-signed or Apple-signed/notarized. Document the resulting operating
-system warning in release notes; do not describe those archives as signed. This
-is separate from curated Maia3: its Windows and macOS runtime publication fails
-closed unless Authenticode and Developer ID/notarization credentials are
-present. Adding application signing is a future release-hardening task.
+Application and Maia3 runtime archives are portable, checksummed release assets
+with no trusted publisher signature. They use no Authenticode or Apple Developer
+ID credentials and are not notarized. PyInstaller/macOS may apply required ad-hoc
+signatures, which provide no publisher identity or trust. Document the resulting
+operating-system warning in release notes. Publisher signing is not a license
+requirement and is not part of the portable release contract.
+
+Keep the complete extracted application folder together. Windows packages carry
+`UCI-Grabber.exe` for the no-console GUI and `uci-grabber-cli.exe` for terminal
+commands; macOS and Linux retain `uci-grabber`. The packaged `portable.flag`
+places mutable state and the installed engine library in an adjacent
+`UCI-Grabber-Data/` directory rather than a machine-specific application-data
+location.
 
 Before a stable catalog release:
 
@@ -32,8 +40,8 @@ Before a stable catalog release:
    secret's public key and requires it to match `catalog.pub` before signing. The
    application embeds the public key and bundled catalog, so mismatched bytes fail
    its tests and the release gate.
-2. Obtain written review for commercial download/use of the exact Maia3 5M,
-   23M, and 79M revisions. Set repository variable
+2. Obtain written review for download, use, and redistribution of the exact
+   Maia3 5M, 23M, and 79M checkpoint revisions. Set repository variable
    `MAIA3_MODEL_LICENSE_REVIEW` to the SHA-256 of
    `packaging/maia3/component-metadata.json` from the tagged commit.
 3. Run the manual **Prepare Maia3 wheelhouse review** workflow. It downloads but
@@ -64,20 +72,28 @@ Before a stable catalog release:
      --wheelhouse "linux-aarch64=$LINUX_ARM_WHEELHOUSE_SHA256"
    ```
 
-   Changing any source input or wheelhouse digest invalidates this value.
-5. Configure `MAIA_WINDOWS_SIGNING_PFX_BASE64` and
-   `MAIA_WINDOWS_SIGNING_PASSWORD`; configure the Apple certificate,
-   identity, notarization, and team secrets documented in the workflow.
+   The source input set includes the exact release and wheelhouse-review workflow
+   files, as well as the Maia3 packaging definitions. Changing any source input
+   or wheelhouse digest invalidates this value.
+5. Confirm every Maia runtime archive contains `CORRESPONDING-SOURCE.txt`, and
+   that the generated recipe Source link resolves to the exact same-tag
+   `maia3-corresponding-source.tar.gz` release asset. Confirm release notes state
+   that portable application and runtime archives carry no trusted publisher
+   signature and may trigger operating-system warnings.
 6. Confirm the release contains all four application packages, the signed
    catalog, and checksums. When Maia3 is enabled, also require all four
    model-free runtimes, `maia3-corresponding-source.tar.gz`, and
    `MAIA3-NOTICES.txt`.
+7. The workflow creates a draft release so an incomplete upload can never become
+   the live catalog endpoint. Inspect every asset and checksum, publish the draft,
+   mark it latest, then verify `releases/latest/download/catalog.json` and
+   `catalog.sig` before announcing the release.
 
 Changing any model revision, digest, runtime input, or build definition changes
 the model, source-input-set, or wheelhouse review digest and requires a new
 review/release.
-Absence or mismatch of the model-review variable omits Maia3 from the catalog;
-it must never be interpreted as approval. Once that model gate is enabled,
-missing/stale source or wheelhouse reviews fail the Maia release before
-installation/publication. These gates record a review decision; they do not
-replace legal advice or prove that a particular source classification is valid.
+For v0.1.1 and later, an absent or stale model-review variable fails the release;
+the workflow must never publish an empty fallback catalog. Missing or stale
+source and wheelhouse reviews also fail before installation or publication.
+These gates record a review decision; they do not replace legal advice or prove
+that a particular source classification is valid.

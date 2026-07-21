@@ -94,6 +94,29 @@ def license_inventory() -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def corresponding_source_notice(source_asset: str) -> str:
+    return f"""Maia3 runtime source and licensing notice
+==========================================
+
+Maia3 code in this runtime is distributed under the GNU Affero General Public
+License version 3. Packaged dependencies retain their respective licenses; see
+PYTHON-THIRD-PARTY-LICENSES.txt and WHEELHOUSE.lock.json.
+
+The same UCI Grabber GitHub release that provides this runtime archive also
+provides the reviewed source/build archive below, without additional charge:
+
+  {source_asset}
+
+Open the GitHub release page from which this runtime was obtained and select
+that exact filename. The signed UCI Grabber catalog's Source link points to the
+same-tag asset directly.
+
+The archive identifies the source materials and any offers selected by the
+release review for this build. This notice is not a legal conclusion about the
+classification of every packaged dependency.
+"""
+
+
 def write_macos_plist(app: Path, component_version: str) -> None:
     marketing = component_version.split("-", 1)[0]
     plist = f"""<?xml version="1.0" encoding="UTF-8"?>
@@ -183,6 +206,10 @@ def main() -> None:
     (runtime_root / "PYTHON-THIRD-PARTY-LICENSES.txt").write_text(
         license_inventory(), encoding="utf-8", newline="\n"
     )
+    source_asset = metadata["component"]["corresponding_source_asset"]
+    (runtime_root / "CORRESPONDING-SOURCE.txt").write_text(
+        corresponding_source_notice(source_asset), encoding="utf-8", newline="\n"
+    )
     inventory = json.loads(args.wheel_inventory.read_text(encoding="utf-8"))
     shutil.copy2(args.wheel_inventory, runtime_root / "WHEELHOUSE.lock.json")
     build_info = {
@@ -195,6 +222,12 @@ def main() -> None:
         "upstream_commit": metadata["component"]["upstream_commit"],
         "models_included": False,
         "network_policy": "local checkpoint only; CPU; AMP disabled; Hugging Face offline",
+        "corresponding_source": {
+            "asset": source_asset,
+            "availability": (
+                "same GitHub release as this runtime archive, without additional charge"
+            ),
+        },
         "wheelhouse": inventory,
     }
     (runtime_root / "BUILDINFO.json").write_text(

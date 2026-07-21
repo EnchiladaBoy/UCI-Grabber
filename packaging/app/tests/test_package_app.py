@@ -35,7 +35,9 @@ class ApplicationPackagingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             inputs = self.inputs(root)
-            files = package_app.payload("windows-x86_64", "1.2.3", *inputs)
+            gui = root / "uci-grabber-gui.exe"
+            gui.write_bytes(b"native GUI fixture\n")
+            files = package_app.payload("windows-x86_64", "1.2.3", *inputs, gui)
             first, second = root / "first.zip", root / "second.zip"
             package_app.create_zip(first, files)
             package_app.create_zip(second, files)
@@ -43,8 +45,10 @@ class ApplicationPackagingTests(unittest.TestCase):
                              hashlib.sha256(second.read_bytes()).digest())
             with zipfile.ZipFile(first) as archive:
                 names = archive.namelist()
-                self.assertIn("uci-grabber-1.2.3/uci-grabber.exe", names)
+                self.assertIn("uci-grabber-1.2.3/UCI-Grabber.exe", names)
+                self.assertIn("uci-grabber-1.2.3/uci-grabber-cli.exe", names)
                 self.assertIn("uci-grabber-1.2.3/THIRD-PARTY-LICENSES.txt", names)
+                self.assertIn("uci-grabber-1.2.3/portable.flag", names)
 
     def test_linux_tar_is_reproducible_and_marks_binary_executable(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -69,6 +73,7 @@ class ApplicationPackagingTests(unittest.TestCase):
             self.assertIn(
                 "UCI Grabber.app/Contents/Resources/THIRD-PARTY-LICENSES.txt", names
             )
+            self.assertIn("UCI Grabber.app/Contents/Resources/portable.flag", names)
 
 
 if __name__ == "__main__":

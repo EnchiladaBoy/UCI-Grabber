@@ -23,7 +23,7 @@ jobs:
         with:
           toolchain: "1.92.0"
           components: rustfmt, clippy
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: "3.12"
       - name: Install Linux GUI build dependencies
@@ -53,6 +53,29 @@ jobs:
             --signature catalog/catalog.sig \
             --bootstrap
           python3 -m compileall -q packaging/app packaging/maia3 catalog
+      - name: Verify Windows checkout preserves signed and review-gated bytes
+        run: |
+          set -euo pipefail
+          probe="$RUNNER_TEMP/uci-grabber-autocrlf"
+          git -c core.autocrlf=true worktree add --detach "$probe" HEAD
+          for asset in \
+            catalog/catalog.json \
+            catalog/catalog.sig \
+            catalog/catalog.pub \
+            catalog/catalog-public-key.pem
+          do
+            test "$(git -C "$probe" hash-object --no-filters "$asset")" = \
+              "$(git rev-parse "HEAD:$asset")"
+          done
+          python3 "$probe/catalog/verify_catalog.py" \
+            --catalog "$probe/catalog/catalog.json" \
+            --signature "$probe/catalog/catalog.sig" \
+            --bootstrap
+          test "$(git -C "$probe" hash-object --no-filters \
+            packaging/maia3/component-metadata.json)" = \
+            "$(git rev-parse HEAD:packaging/maia3/component-metadata.json)"
+          test "$(python3 "$probe/packaging/maia3/review_digest.py" source)" = \
+            "$(python3 packaging/maia3/review_digest.py source)"
       - name: Check Rust formatting
         run: cargo fmt --all --check
       - name: Lint all targets and features

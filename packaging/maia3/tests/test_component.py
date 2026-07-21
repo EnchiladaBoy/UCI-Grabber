@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import io
 import json
 import os
 import subprocess
@@ -14,6 +15,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 
 
 def load_module(name: str, filename: str):
@@ -25,6 +27,8 @@ def load_module(name: str, filename: str):
 
 
 entry = load_module("maia3_entry", "maia3_entry.py")
+build_runtime = load_module("build_runtime", "build_runtime.py")
+make_source_bundle = load_module("make_source_bundle", "make_source_bundle.py")
 package_runtime = load_module("package_runtime", "package_runtime.py")
 review_digest = load_module("review_digest", "review_digest.py")
 
@@ -38,6 +42,8 @@ class ComponentTests(unittest.TestCase):
             text=True,
         )
         self.assertIn("publication remains review-gated", result.stdout)
+        metadata = json.loads((ROOT / "component-metadata.json").read_text())
+        self.assertEqual(metadata["component"]["minimum_fisheye_version"], "1.8.0")
 
     def test_entry_rejects_arguments_before_loading_model(self) -> None:
         with self.assertRaisesRegex(SystemExit, "do not accept"):
@@ -50,6 +56,18 @@ class ComponentTests(unittest.TestCase):
             Path("/tmp/maia3-runtime/models/maia3-5m.pt"),
         )
 
+    def test_entry_gives_each_launcher_a_distinct_uci_name(self) -> None:
+        for model, expected in (
+            ("maia3-5m", "id name Maia3 5M\n"),
+            ("maia3-23m", "id name Maia3 23M\n"),
+            ("maia3-79m", "id name Maia3 79M\n"),
+        ):
+            output = io.StringIO()
+            proxy = entry.VariantNameOutput(output, model)
+            proxy.write("id name Maia3\n")
+            proxy.flush()
+            self.assertEqual(output.getvalue(), expected)
+
     def test_entry_rejects_wrong_checkpoint_size(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -60,6 +78,26 @@ class ComponentTests(unittest.TestCase):
             (models / "maia3-5m.pt").write_bytes(b"wrong")
             with self.assertRaisesRegex(SystemExit, "size mismatch"):
                 entry.managed_main([], executable)
+
+    def test_runtime_and_release_notices_locate_same_release_source(self) -> None:
+        metadata = json.loads((ROOT / "component-metadata.json").read_text(encoding="utf-8"))
+        source_asset = metadata["component"]["corresponding_source_asset"]
+        runtime_notice = build_runtime.corresponding_source_notice(source_asset)
+        release_notice = make_source_bundle.notice_text(
+            metadata, "a" * 64, "fixture AGPL text\n"
+        )
+        for notice in (runtime_notice, release_notice):
+            normalized = " ".join(notice.lower().split())
+            self.assertIn(source_asset, normalized)
+            self.assertIn("same", normalized)
+            self.assertIn("release", normalized)
+            self.assertIn("without additional charge", normalized)
+            self.assertIn("not a legal", normalized)
+        self.assertIn("UCI Grabber does not relicense them", release_notice)
+        for model in metadata["models"].values():
+            self.assertIn(model["revision"], release_notice)
+            self.assertIn(f"/{model['revision']}/README.md", release_notice)
+            self.assertIn(model["sha256"], release_notice)
 
     def test_zip_runtime_packaging_is_reproducible(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -200,6 +238,16 @@ class ComponentTests(unittest.TestCase):
                 review_digest.verify(fixture, "0" * 64, "fixture")
             with self.assertRaisesRegex(ValueError, "missing"):
                 review_digest.verify(fixture, "", "fixture")
+
+    def test_every_published_packaging_source_is_review_bound(self) -> None:
+        self.assertEqual(
+            set(make_source_bundle.INCLUDED_PACKAGING_FILES),
+            set(review_digest.SOURCE_REVIEW_FILES),
+        )
+        self.assertEqual(
+            set(make_source_bundle.INCLUDED_REPOSITORY_FILES),
+            set(review_digest.SOURCE_REVIEW_REPOSITORY_FILES),
+        )
 
     def test_release_workflow_reviews_every_wheelhouse_before_install(self) -> None:
         workflow = (ROOT.parents[1] / ".github" / "workflows" / "release.yml").read_text()

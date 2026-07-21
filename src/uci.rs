@@ -66,11 +66,19 @@ pub fn validate_engine_with_cancel(
     if !executable.is_file() {
         return Err(Error::MissingInstall(executable.to_path_buf()));
     }
-    let mut child = Command::new(executable)
+    let mut command = Command::new(executable);
+    command
         .current_dir(working_directory)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    let mut child = command
         .spawn()
         .map_err(|source| Error::UciValidation(format!("could not start engine: {source}")))?;
     let stdout = child

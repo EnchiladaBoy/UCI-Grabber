@@ -8,7 +8,10 @@ does not replace a valid cache with a failed download.
 The network feed is the immutable asset pair at
 `releases/latest/download/catalog.json` and `catalog.sig`. A long-lived signed,
 empty catalog is compiled into the application solely as an offline fallback;
-the bootstrap policy rejects it if any recipe is added.
+the bootstrap policy rejects it if any recipe is added. On first launch, or
+after rejecting an invalid cache, the GUI refreshes this bounded metadata pair
+in a worker and authenticates it before parsing. It never downloads an engine
+runtime or model until the user selects a model and presses Install.
 
 Downloads are written to a new staging directory, bounded by each declared size
 and a 2 GiB cumulative package declaration, hashed while streaming, and compared
@@ -25,8 +28,9 @@ timeouts. UCI success does not grant FishEye trust. “Use in FishEye” only pa
 the path to `fisheye gui --add-external-engine`; FishEye independently inspects,
 fingerprints, tests, and asks the user to approve it.
 
-There is no background download, automatic executable replacement, install
-hook, shell expansion, telemetry, or direct write to FishEye configuration.
+There is no background engine/artifact download, automatic executable
+replacement, install hook, shell expansion, telemetry, or direct write to
+FishEye configuration.
 
 ## Native executable boundary
 

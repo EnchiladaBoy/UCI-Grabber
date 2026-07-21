@@ -257,7 +257,7 @@ fn fetch_bounded(url: &str, limit: usize) -> Result<Vec<u8>> {
         .https_only(true)
         .max_redirects(5)
         .max_redirects_will_error(true)
-        .timeout_global(Some(Duration::from_secs(60)))
+        .timeout_global(Some(Duration::from_secs(15)))
         .build();
     let agent: ureq::Agent = config.into();
     let mut response = agent

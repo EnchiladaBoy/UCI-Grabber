@@ -1,15 +1,17 @@
 {
   "schema": 1,
   "publication": {
-    "default": "excluded_pending_checkpoint_terms_review",
+    "default": "excluded_pending_checkpoint_download_use_redistribution_review",
     "gate_environment": "MAIA3_MODEL_LICENSE_REVIEW",
     "gate_value": "sha256(component-metadata.json)"
   },
   "component": {
     "version": "0.1.0-uci-grabber.1",
-    "minimum_fisheye_version": "1.7.0",
+    "minimum_fisheye_version": "1.8.0",
     "upstream_repository": "https://github.com/CSSLab/maia3",
-    "upstream_commit": "1e13597c42d4858b7cfd7cfdae01e297263364b2"
+    "upstream_commit": "1e13597c42d4858b7cfd7cfdae01e297263364b2",
+    "corresponding_source_asset": "maia3-corresponding-source.tar.gz",
+    "notices_asset": "MAIA3-NOTICES.txt"
   },
   "runtimes": {
     "windows-x86_64": {

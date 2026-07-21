@@ -1,4 +1,4 @@
-name: Release catalog and optional Maia3 component
+name: Release catalog and Maia3 component
 
 on:
   push:
@@ -9,6 +9,11 @@ on:
         description: Existing stable vMAJOR.MINOR.PATCH tag to package
         required: true
         type: string
+      require_maia3:
+        description: Fail unless the reviewed Maia3 catalog and all four runtimes can be built
+        required: true
+        default: true
+        type: boolean
 
 permissions:
   contents: write
@@ -19,7 +24,7 @@ concurrency:
 
 jobs:
   gate:
-    name: Validate tag and optional-component review gate
+    name: Validate tag and Maia3 review gate
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.metadata.outputs.tag }}
@@ -35,6 +40,7 @@ jobs:
         shell: bash
         env:
           REQUESTED_TAG: ${{ inputs.tag || github.ref_name }}
+          DISPATCH_REQUIRE_MAIA3: ${{ inputs.require_maia3 && 'true' || 'false' }}
           MODEL_LICENSE_REVIEW: ${{ vars.MAIA3_MODEL_LICENSE_REVIEW }}
           CORRESPONDING_SOURCE_REVIEW: ${{ vars.MAIA3_CORRESPONDING_SOURCE_REVIEW }}
           WHEELHOUSE_WINDOWS_REVIEW: ${{ vars.MAIA3_WHEELHOUSE_REVIEW_WINDOWS_X86_64 }}
@@ -53,6 +59,14 @@ jobs:
             echo "Tag $REQUESTED_TAG does not match Cargo version $manifest_version." >&2
             exit 1
           }
+          IFS=. read -r major minor patch <<< "$version"
+          major=$((10#$major))
+          minor=$((10#$minor))
+          patch=$((10#$patch))
+          maia_required="$DISPATCH_REQUIRE_MAIA3"
+          if (( major > 0 || minor > 1 || (minor == 1 && patch >= 1) )); then
+            maia_required=true
+          fi
           digest="$(sha256sum packaging/maia3/component-metadata.json | awk '{print $1}')"
           wheelhouse_arguments=(
             --wheelhouse "windows-x86_64=${WHEELHOUSE_WINDOWS_REVIEW:-}"
@@ -60,17 +74,24 @@ jobs:
             --wheelhouse "linux-x86_64=${WHEELHOUSE_LINUX_X86_REVIEW:-}"
             --wheelhouse "linux-aarch64=${WHEELHOUSE_LINUX_ARM_REVIEW:-}"
           )
-          if test -n "${MODEL_LICENSE_REVIEW:-}" && test "$MODEL_LICENSE_REVIEW" = "$digest"; then
+          if test -z "${MODEL_LICENSE_REVIEW:-}"; then
+            if test "$maia_required" = true; then
+              echo 'This release requires Maia3, but MAIA3_MODEL_LICENSE_REVIEW is absent.' >&2
+              exit 1
+            fi
+            enabled=false
+            source_digest="$(python3 packaging/maia3/review_digest.py source)"
+            echo 'Maia3 remains excluded: checkpoint terms review digest is absent.'
+          elif test "$MODEL_LICENSE_REVIEW" != "$digest"; then
+            echo 'MAIA3_MODEL_LICENSE_REVIEW is stale; refusing to publish an empty fallback.' >&2
+            exit 1
+          else
             source_digest="$(python3 packaging/maia3/review_digest.py \
               source-release "${wheelhouse_arguments[@]}")"
             python3 packaging/maia3/review_digest.py verify-source \
               --expected "${CORRESPONDING_SOURCE_REVIEW:-}" \
               "${wheelhouse_arguments[@]}"
             enabled=true
-          else
-            enabled=false
-            source_digest="$(python3 packaging/maia3/review_digest.py source)"
-            echo 'Maia3 remains excluded: checkpoint terms review digest is absent or stale.'
           fi
           {
             echo "tag=$REQUESTED_TAG"
@@ -132,18 +153,22 @@ jobs:
           - os: windows-latest
             platform: windows-x86_64
             binary: uci-grabber.exe
+            gui_binary: uci-grabber-gui.exe
             asset: uci-grabber-windows-x86_64.zip
           - os: macos-15
             platform: macos-aarch64
             binary: uci-grabber
+            gui_binary: ""
             asset: UCI-Grabber-macos-aarch64.app.zip
           - os: ubuntu-24.04
             platform: linux-x86_64
             binary: uci-grabber
+            gui_binary: ""
             asset: uci-grabber-linux-x86_64.tar.gz
           - os: ubuntu-24.04-arm
             platform: linux-aarch64
             binary: uci-grabber
+            gui_binary: ""
             asset: uci-grabber-linux-aarch64.tar.gz
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -152,7 +177,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
           toolchain: "1.92.0"
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: "3.12"
       - name: Install Linux GUI build dependencies
@@ -180,8 +205,15 @@ jobs:
           MACOSX_DEPLOYMENT_TARGET: ${{ matrix.platform == 'macos-aarch64' && '12.3' || '' }}
         run: |
           set -euo pipefail
-          cargo build --release --locked
+          cargo build --release --locked --bins
           'target/release/${{ matrix.binary }}' --help
+          'target/release/${{ matrix.binary }}' \
+            --data-dir "$RUNNER_TEMP/uci-grabber-smoke" list
+          if test -n '${{ matrix.gui_binary }}'; then
+            gui='target/release/${{ matrix.gui_binary }}'
+            test -s "$gui"
+            python -c 'import pathlib, sys; data = pathlib.Path(sys.argv[1]).read_bytes(); offset = int.from_bytes(data[0x3c:0x40], "little"); data[offset:offset + 4] == b"PE\0\0" or sys.exit("GUI binary is not PE"); optional = offset + 24; subsystem = int.from_bytes(data[optional + 68:optional + 70], "little"); subsystem == 2 or sys.exit(f"expected Windows GUI subsystem 2, found {subsystem}")' "$gui"
+          fi
       - name: Create deterministic application archive
         shell: bash
         env:
@@ -189,15 +221,24 @@ jobs:
         run: |
           set -euo pipefail
           mkdir release-assets
-          python packaging/app/package_app.py \
-            --platform '${{ matrix.platform }}' \
-            --version "${RELEASE_TAG#v}" \
-            --binary 'target/release/${{ matrix.binary }}' \
-            --license LICENSE \
-            --readme README.md \
-            --third-party release-inputs/THIRD-PARTY-LICENSES.txt \
+          arguments=(
+            --platform '${{ matrix.platform }}'
+            --version "${RELEASE_TAG#v}"
+            --binary 'target/release/${{ matrix.binary }}'
+            --license LICENSE
+            --readme README.md
+            --third-party release-inputs/THIRD-PARTY-LICENSES.txt
             --output 'release-assets/${{ matrix.asset }}'
+          )
+          if test -n '${{ matrix.gui_binary }}'; then
+            arguments+=(--gui-binary 'target/release/${{ matrix.gui_binary }}')
+          fi
+          python packaging/app/package_app.py "${arguments[@]}"
           test -s 'release-assets/${{ matrix.asset }}'
+          if test '${{ matrix.platform }}' = windows-x86_64; then
+            python -c 'import sys, zipfile; version, archive = sys.argv[1:]; names = set(zipfile.ZipFile(archive).namelist()); root = f"uci-grabber-{version}"; expected = {f"{root}/UCI-Grabber.exe", f"{root}/uci-grabber-cli.exe"}; missing = expected - names; not missing or sys.exit(f"Windows package is missing {sorted(missing)}")' \
+              "${RELEASE_TAG#v}" 'release-assets/${{ matrix.asset }}'
+          fi
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: package-app-${{ matrix.platform }}
@@ -215,7 +256,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ needs.gate.outputs.tag }}
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: 3.12.10
       - name: Fetch exact Maia3 and dependency source
@@ -274,27 +315,31 @@ jobs:
             archive: zip
             asset: uci-grabber-maia3-runtime-windows-x86_64.zip
             wheelhouse_review_variable: MAIA3_WHEELHOUSE_REVIEW_WINDOWS_X86_64
+            smoke_models: maia3-5m
           - os: macos-15
             platform: macos-aarch64
             archive: tar.zst
             asset: uci-grabber-maia3-runtime-macos-aarch64.tar.zst
             wheelhouse_review_variable: MAIA3_WHEELHOUSE_REVIEW_MACOS_AARCH64
+            smoke_models: maia3-5m
           - os: ubuntu-24.04
             platform: linux-x86_64
             archive: tar.zst
             asset: uci-grabber-maia3-runtime-linux-x86_64.tar.zst
             wheelhouse_review_variable: MAIA3_WHEELHOUSE_REVIEW_LINUX_X86_64
+            smoke_models: maia3-5m maia3-23m maia3-79m
           - os: ubuntu-24.04-arm
             platform: linux-aarch64
             archive: tar.zst
             asset: uci-grabber-maia3-runtime-linux-aarch64.tar.zst
             wheelhouse_review_variable: MAIA3_WHEELHOUSE_REVIEW_LINUX_AARCH64
+            smoke_models: maia3-5m
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ needs.gate.outputs.tag }}
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: 3.12.10
           cache: pip
@@ -382,91 +427,50 @@ jobs:
           test -s "$RUNNER_TEMP/maia3-stage/maia3-runtime/BUILDINFO.json"
           test -s "$RUNNER_TEMP/maia3-stage/maia3-runtime/COPYING-Maia3-AGPL-3.0.txt"
 
-      - name: Authenticode-sign every Windows PE module
-        if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          SIGNING_PFX_BASE64: ${{ secrets.MAIA_WINDOWS_SIGNING_PFX_BASE64 }}
-          SIGNING_PASSWORD: ${{ secrets.MAIA_WINDOWS_SIGNING_PASSWORD }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          if ([string]::IsNullOrWhiteSpace($env:SIGNING_PFX_BASE64) -or
-              [string]::IsNullOrWhiteSpace($env:SIGNING_PASSWORD)) {
-            throw 'Stable Maia3 releases require Windows Authenticode credentials.'
-          }
-          $pfx = Join-Path $env:RUNNER_TEMP 'maia3-signing.pfx'
-          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:SIGNING_PFX_BASE64))
-          $signTool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" |
-            Sort-Object FullName -Descending | Select-Object -First 1
-          if ($null -eq $signTool) { throw 'signtool.exe was not found.' }
-          $files = Get-ChildItem "$env:RUNNER_TEMP/maia3-stage/maia3-runtime" -Recurse -File |
-            Where-Object { $_.Extension -in '.exe', '.dll', '.pyd' }
-          if ($files.Count -eq 0) { throw 'No Windows runtime binaries were found.' }
-          foreach ($file in $files) {
-            & $signTool.FullName sign /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com /f $pfx /p $env:SIGNING_PASSWORD $file.FullName
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            & $signTool.FullName verify /pa /all $file.FullName
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          }
-          Remove-Item -Force $pfx
-
-      - name: Sign, notarize, and staple the macOS component
-        if: runner.os == 'macOS'
+      - name: Verify zero-argument offline UCI behavior with immutable checkpoints
         shell: bash
         env:
-          CERTIFICATE_P12_BASE64: ${{ secrets.MAIA_APPLE_CERTIFICATE_P12_BASE64 }}
-          CERTIFICATE_PASSWORD: ${{ secrets.MAIA_APPLE_CERTIFICATE_PASSWORD }}
-          SIGNING_IDENTITY: ${{ secrets.MAIA_APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.MAIA_APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.MAIA_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.MAIA_APPLE_TEAM_ID }}
+          SMOKE_MODELS: ${{ matrix.smoke_models }}
         run: |
           set -euo pipefail
-          for variable in CERTIFICATE_P12_BASE64 CERTIFICATE_PASSWORD SIGNING_IDENTITY \
-            APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
-            test -n "${!variable:-}" || { echo "Missing $variable." >&2; exit 1; }
+          for model in $SMOKE_MODELS; do
+            case "$model" in
+              maia3-5m)
+                repository=UofTCSSLab/Maia3-5M
+                revision=b6559de2398d7140b985f28fd2c19fb5e47ddabe
+                bytes=20968049
+                sha256=ba14208b2992d85502f5fb501934abf6aaaeb355e9f3fdf90e326911f562524f
+                ;;
+              maia3-23m)
+                repository=UofTCSSLab/Maia3-23M
+                revision=51a0145a8178046f7de23119160b136672deeb2b
+                bytes=91799307
+                sha256=bce6cd1af5f0399ac7eed33fabb7a6a2ef6193662c2740f262bf93af7bfb3569
+                ;;
+              maia3-79m)
+                repository=UofTCSSLab/Maia3-79M
+                revision=a107d6ceb7b298cb04ae1da4edffe2939858b894
+                bytes=315651851
+                sha256=3fc6181d5db789b45a15305732148757ae74efa3e0028e81ba335b462dac45c2
+                ;;
+              *)
+                echo "Unreviewed Maia3 smoke model: $model" >&2
+                exit 1
+                ;;
+            esac
+            checkpoint="$RUNNER_TEMP/$model.pt"
+            curl --fail --location --retry 3 \
+              --output "$checkpoint" \
+              "https://huggingface.co/$repository/resolve/$revision/$model.pt"
+            python packaging/maia3/verify_file.py "$checkpoint" \
+              --bytes "$bytes" \
+              --sha256 "$sha256"
+            python packaging/maia3/smoke_runtime.py \
+              --runtime-root "$RUNNER_TEMP/maia3-stage/maia3-runtime" \
+              --platform '${{ matrix.platform }}' \
+              --model "$model" \
+              --checkpoint "$checkpoint"
           done
-          certificate="$RUNNER_TEMP/maia3-signing.p12"
-          keychain="$RUNNER_TEMP/maia3-signing.keychain-db"
-          keychain_password="$(openssl rand -hex 24)"
-          python -c 'import base64, os, pathlib; pathlib.Path(os.environ["RUNNER_TEMP"], "maia3-signing.p12").write_bytes(base64.b64decode(os.environ["CERTIFICATE_P12_BASE64"], validate=True))'
-          security create-keychain -p "$keychain_password" "$keychain"
-          security unlock-keychain -p "$keychain_password" "$keychain"
-          security import "$certificate" -k "$keychain" -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain"
-          security list-keychains -d user -s "$keychain"
-          app="$RUNNER_TEMP/maia3-stage/maia3-runtime/UCI-Grabber-Maia3.app"
-          while IFS= read -r -d '' candidate; do
-            if file "$candidate" | grep -q 'Mach-O'; then
-              codesign --force --timestamp --options runtime --sign "$SIGNING_IDENTITY" --keychain "$keychain" "$candidate"
-            fi
-          done < <(find "$app/Contents/MacOS" -type f -print0)
-          codesign --force --deep --timestamp --options runtime --sign "$SIGNING_IDENTITY" --keychain "$keychain" "$app"
-          ditto -c -k --keepParent "$app" "$RUNNER_TEMP/maia3-notarize.zip"
-          xcrun notarytool submit "$RUNNER_TEMP/maia3-notarize.zip" \
-            --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
-          xcrun stapler staple "$app"
-          codesign --verify --deep --strict --verbose=2 "$app"
-          xcrun stapler validate "$app"
-          rm -f "$certificate"
-          security delete-keychain "$keychain"
-
-      - name: Verify zero-argument offline UCI behavior with immutable 5M checkpoint
-        shell: bash
-        run: |
-          set -euo pipefail
-          checkpoint="$RUNNER_TEMP/maia3-5m.pt"
-          curl --fail --location --retry 3 \
-            --output "$checkpoint" \
-            https://huggingface.co/UofTCSSLab/Maia3-5M/resolve/b6559de2398d7140b985f28fd2c19fb5e47ddabe/maia3-5m.pt
-          python packaging/maia3/verify_file.py "$checkpoint" \
-            --bytes 20968049 \
-            --sha256 ba14208b2992d85502f5fb501934abf6aaaeb355e9f3fdf90e326911f562524f
-          python packaging/maia3/smoke_runtime.py \
-            --runtime-root "$RUNNER_TEMP/maia3-stage/maia3-runtime" \
-            --platform '${{ matrix.platform }}' \
-            --model maia3-5m \
-            --checkpoint "$checkpoint"
       - name: Package the verified runtime
         shell: bash
         run: |
@@ -477,20 +481,6 @@ jobs:
             --format '${{ matrix.archive }}' \
             --output 'release-assets/${{ matrix.asset }}'
           test -s 'release-assets/${{ matrix.asset }}'
-      - name: Revalidate the packaged macOS signature and notarization ticket
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          set -euo pipefail
-          extracted="$RUNNER_TEMP/maia3-packaged-runtime"
-          mkdir "$extracted"
-          zstd --decompress --stdout 'release-assets/${{ matrix.asset }}' \
-            | tar -xf - -C "$extracted"
-          app="$extracted/maia3-runtime/UCI-Grabber-Maia3.app"
-          test -d "$app"
-          codesign --verify --deep --strict --verbose=2 "$app"
-          xcrun stapler validate "$app"
-          spctl --assess --type execute --verbose=2 "$app"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: component-maia3-${{ matrix.platform }}
@@ -573,6 +563,8 @@ jobs:
             --maia3-license-review-digest "$REVIEW_DIGEST"
           )
           python3 catalog/generate_catalog.py "${arguments[@]}"
+          python3 -c \
+            'import json, pathlib, sys; data = json.loads(pathlib.Path("dist/catalog.json").read_text()); ids = [recipe["id"] for recipe in data["recipes"]]; ids == ["maia3"] or sys.exit("Maia3-enabled release produced an empty or unexpected catalog")'
       - name: Sign exact reviewed Maia3 catalog bytes with the offline catalog key
         if: needs.gate.outputs.maia_enabled == 'true'
         shell: bash
@@ -620,19 +612,21 @@ jobs:
           path: dist/*
           if-no-files-found: error
           overwrite: true
-      - name: Publish immutable catalog and component assets
+      - name: Create a draft release with the complete catalog and component set
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           tag_name: ${{ needs.gate.outputs.tag }}
-          draft: false
+          draft: true
           prerelease: false
-          make_latest: true
+          make_latest: false
           generate_release_notes: true
           body: |
-            Security note: UCI Grabber v1 application archives are checksummed but are not
-            Authenticode-signed or Apple-signed/notarized, so the operating system may warn
-            before first launch. Optional curated Maia3 Windows/macOS runtimes are published
-            only after their separate signing and notarization gates pass.
+            Security note: UCI Grabber application archives and portable Maia3 runtimes are
+            checksummed but carry no Authenticode or Apple Developer ID publisher signature
+            and are not notarized, so the operating system may warn before first launch.
+            Required macOS ad-hoc signatures provide no publisher identity. Maia3 checkpoint
+            downloads referenced by the catalog use immutable revisions and are verified
+            against the reviewed size and SHA-256.
           fail_on_unmatched_files: true
           overwrite_files: false
           files: dist/*

@@ -15,6 +15,23 @@ MODELS = {
 }
 
 
+class VariantNameOutput:
+    """Rewrite only Maia3's UCI identity while forwarding the wrapped stream API."""
+
+    def __init__(self, stream, model: str) -> None:
+        self.stream = stream
+        self.name = f"Maia3 {model.removeprefix('maia3-').upper()}"
+
+    def write(self, text: str) -> int:
+        return self.stream.write(text.replace("id name Maia3", f"id name {self.name}"))
+
+    def flush(self) -> None:
+        self.stream.flush()
+
+    def __getattr__(self, name: str):
+        return getattr(self.stream, name)
+
+
 def sha256(path: Path) -> str:
     result = hashlib.sha256()
     with path.open("rb") as handle:
@@ -25,7 +42,7 @@ def sha256(path: Path) -> str:
 
 def model_path(executable: Path, model: str) -> Path:
     # macOS launchers live in Foo.app/Contents/MacOS; models deliberately live
-    # outside the signed app bundle so installation cannot invalidate signing.
+    # outside the app bundle so it stays self-contained and replaceable.
     if executable.parent.name == "MacOS" and executable.parent.parent.name == "Contents":
         runtime_root = executable.parent.parent.parent.parent
     else:
@@ -64,18 +81,23 @@ def managed_main(arguments: list[str] | None = None, executable: Path | None = N
     )
     from maia3.uci import main as maia_main
 
-    maia_main(
-        [
-            "--model",
-            model,
-            "--checkpoint-path",
-            str(checkpoint),
-            "--device",
-            "cpu",
-            "--no-use-amp",
-            "--local-files-only",
-        ]
-    )
+    original_stdout = sys.stdout
+    sys.stdout = VariantNameOutput(original_stdout, model)
+    try:
+        maia_main(
+            [
+                "--model",
+                model,
+                "--checkpoint-path",
+                str(checkpoint),
+                "--device",
+                "cpu",
+                "--no-use-amp",
+                "--local-files-only",
+            ]
+        )
+    finally:
+        sys.stdout = original_stdout
 
 
 if __name__ == "__main__":

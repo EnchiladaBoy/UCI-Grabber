@@ -15,9 +15,16 @@ REPOSITORY_ROOT = ROOT.parent
 MAIA_METADATA = REPOSITORY_ROOT / "packaging" / "maia3" / "component-metadata.json"
 sys.path.insert(0, str(ROOT))
 from validate_catalog import load_and_validate, validate_recipe  # noqa: E402
+from verify_catalog import decode_signature  # noqa: E402
 
 
 class CatalogTests(unittest.TestCase):
+    def test_raw_signature_bytes_are_not_trimmed(self) -> None:
+        leading_whitespace = b"\n" + bytes(range(63))
+        trailing_whitespace = b"x" * 63 + b" "
+        self.assertEqual(decode_signature(leading_whitespace), leading_whitespace)
+        self.assertEqual(decode_signature(trailing_whitespace), trailing_whitespace)
+
     def test_bootstrap_catalog_signature_and_raw_key_match(self) -> None:
         subprocess.run(
             [
@@ -40,6 +47,7 @@ class CatalogTests(unittest.TestCase):
             stdout=subprocess.PIPE,
         ).stdout
         self.assertEqual((ROOT / "catalog.pub").read_text().strip(), der[-32:].hex())
+        self.assertEqual(load_and_validate(ROOT / "catalog.json")["recipes"], [])
 
     def test_bootstrap_tamper_fails_authentication(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -113,18 +121,57 @@ class CatalogTests(unittest.TestCase):
                 check=True,
             )
             catalog = load_and_validate(output)
+            self.assertEqual(len(catalog["recipes"]), 1)
             self.assertEqual([recipe["id"] for recipe in catalog["recipes"]], ["maia3"])
             recipe = catalog["recipes"][0]
+            self.assertEqual(recipe["minimum_fisheye_version"], "1.8.0")
+            self.assertEqual(
+                recipe["license"],
+                {
+                    "spdx": "LicenseRef-Maia3-Composite-Terms",
+                    "name": (
+                        "Composite installation: Maia3 code under AGPL-3.0; packaged "
+                        "dependencies and checkpoints retain their respective terms"
+                    ),
+                    "url": (
+                        "https://github.com/EnchiladaBoy/UCI-Grabber/releases/download/"
+                        "v1.2.3/MAIA3-NOTICES.txt"
+                    ),
+                    "source_url": (
+                        "https://github.com/EnchiladaBoy/UCI-Grabber/releases/download/"
+                        "v1.2.3/maia3-corresponding-source.tar.gz"
+                    ),
+                },
+            )
             self.assertEqual(
                 [model["id"] for model in recipe["models"]],
                 ["maia3-5m", "maia3-23m", "maia3-79m"],
             )
+            expected_model_urls = {
+                model_id: (
+                    f"https://huggingface.co/{model['repository']}/resolve/"
+                    f"{model['revision']}/{model['filename']}"
+                )
+                for model_id, model in metadata["models"].items()
+            }
             for model in recipe["models"]:
                 self.assertEqual(len(model["packages"]), 4)
                 for package in model["packages"]:
-                    self.assertEqual([item["kind"] for item in package["artifacts"]],
-                                     ["runtime", "model"])
-                    self.assertIn("/resolve/", package["artifacts"][1]["url"])
+                    artifacts = package["artifacts"]
+                    self.assertEqual(
+                        [item["kind"] for item in artifacts], ["runtime", "model"]
+                    )
+                    runtime = metadata["runtimes"][package["platform"]]
+                    self.assertEqual(
+                        artifacts[0]["url"],
+                        "https://github.com/EnchiladaBoy/UCI-Grabber/releases/download/"
+                        f"v1.2.3/{runtime['asset']}",
+                    )
+                    self.assertEqual(artifacts[1]["url"], expected_model_urls[model["id"]])
+                    self.assertRegex(
+                        artifacts[1]["url"],
+                        r"^https://huggingface\.co/[^/]+/[^/]+/resolve/[0-9a-f]{40}/[^/]+$",
+                    )
 
     def test_shared_parity_fixture_is_valid(self) -> None:
         fixture = json.loads((ROOT / "tests" / "fixtures" / "valid-recipe.json").read_text())

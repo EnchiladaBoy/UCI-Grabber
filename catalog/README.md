@@ -37,13 +37,26 @@ paths, Windows drives/alternate streams/invalid characters/reserved device
 names, backslashes, dot aliases, trailing dots/spaces, and `..` traversal are
 rejected.
 
-## Maia3 is not yet published
+## Maia3 production recipe
 
-`packaging/maia3/component-metadata.json` records the proposed 5M, 23M, and 79M
-inputs, but the default generated catalog is empty. The generator includes the
-Maia3 recipe only when `--include-maia3` and the exact SHA-256 of that metadata
-are both supplied. CI obtains the digest from `MAIA3_MODEL_LICENSE_REVIEW` only
-after written review of the exact checkpoint revisions and terms. Runtime jobs
-add independent digest gates for the corresponding-source policy/build inputs
-and each platform's canonical wheelhouse before a Maia recipe can reach the
-published catalog.
+Maia3 is the sole curated production recipe. It offers the 5M, 23M, and 79M
+models as variants of one recipe, with checkpoint downloads pinned directly to
+full Hugging Face revisions. The checked-in bootstrap `catalog.json` remains
+empty so an application package never promises release assets that do not yet
+exist. The release generator includes exactly one Maia3 recipe only when
+`--include-maia3` and the exact SHA-256 of the reviewed metadata are supplied.
+
+CI obtains that digest from `MAIA3_MODEL_LICENSE_REVIEW` only after written
+review of download, use, and redistribution for the exact checkpoint revisions.
+Independent digest gates bind the runtime source/build policy and each
+platform's canonical wheelhouse. The recipe's License link points to the exact
+same-release `MAIA3-NOTICES.txt`, which carries the Maia3 code license and lists
+the pinned model-card/terms pages for every checkpoint without claiming that
+one license covers the whole installation. Its Source link points directly to
+`maia3-corresponding-source.tar.gz` on that same tagged UCI Grabber release.
+
+Application and runtime archives are portable and carry no Authenticode or Apple
+Developer ID publisher signature and are not notarized. The catalog signature
+authenticates the catalog and its declared hashes, not native-code publisher
+identity, so operating-system warnings may still appear. Required macOS ad-hoc
+signatures do not identify or establish trust in a publisher.
