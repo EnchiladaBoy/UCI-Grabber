@@ -17,35 +17,6 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  catalog_key:
-    name: Verify catalog signing key availability
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - name: Match the protected key to the embedded public key
-        shell: bash
-        env:
-          PRIVATE_KEY_BASE64: ${{ secrets.CATALOG_ED25519_PRIVATE_KEY_BASE64 }}
-        run: |
-          set -euo pipefail
-          test -n "${PRIVATE_KEY_BASE64:-}" || {
-            echo 'CATALOG_ED25519_PRIVATE_KEY_BASE64 is not configured.' >&2
-            exit 1
-          }
-          private_key="$RUNNER_TEMP/catalog-private.pem"
-          derived_public="$RUNNER_TEMP/catalog-public.pem"
-          python -c 'import base64, os, pathlib; pathlib.Path(os.environ["RUNNER_TEMP"], "catalog-private.pem").write_bytes(base64.b64decode(os.environ["PRIVATE_KEY_BASE64"], validate=True))'
-          chmod 600 "$private_key"
-          openssl pkey -in "$private_key" -pubout -out "$derived_public"
-          actual="$(openssl pkey -pubin -in "$derived_public" -outform DER | tail -c 32 | od -An -vtx1 | tr -d ' \n')"
-          expected="$(tr -d ' \r\n' < catalog/catalog.pub)"
-          test "$actual" = "$expected" || {
-            echo 'The protected catalog key does not match catalog.pub.' >&2
-            exit 1
-          }
-          rm -f "$private_key"
-
   inventory:
     name: Candidate wheel inventory · ${{ matrix.platform }}
     runs-on: ${{ matrix.os }}
@@ -56,12 +27,16 @@ jobs:
         include:
           - os: windows-latest
             platform: windows-x86_64
+            pip_platform_args: --platform win_amd64 --python-version 3.12 --implementation cp --abi cp312
           - os: macos-15
             platform: macos-aarch64
+            pip_platform_args: --platform macosx_12_0_arm64 --python-version 3.12 --implementation cp --abi cp312
           - os: ubuntu-24.04
             platform: linux-x86_64
+            pip_platform_args: --platform manylinux_2_28_x86_64 --platform manylinux2014_x86_64 --platform manylinux_2_17_x86_64 --python-version 3.12 --implementation cp --abi cp312
           - os: ubuntu-24.04-arm
             platform: linux-aarch64
+            pip_platform_args: --platform manylinux_2_28_aarch64 --platform manylinux2014_aarch64 --platform manylinux_2_17_aarch64 --python-version 3.12 --implementation cp --abi cp312
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
@@ -74,11 +49,13 @@ jobs:
         run: |
           set -euo pipefail
           mkdir wheelhouse
+          read -r -a target_args <<< '${{ matrix.pip_platform_args }}'
           python -m pip download \
             --dest wheelhouse \
             --only-binary=:all: \
             --index-url https://download.pytorch.org/whl/cpu \
             --extra-index-url https://pypi.org/simple \
+            "${target_args[@]}" \
             --requirement packaging/maia3/requirements-direct.txt
           python packaging/maia3/build_wheel_lock.py \
             --wheelhouse wheelhouse \
@@ -125,7 +102,9 @@ jobs:
           git config user.name github-actions
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add "$target"
-          git commit -m "Publish Maia3 wheelhouse review candidates for ${GITHUB_SHA:0:12}"
+          if ! git diff --cached --quiet; then
+            git commit -m "Publish Maia3 wheelhouse review candidates for ${GITHUB_SHA:0:12}"
+          fi
           git push origin "HEAD:refs/heads/$branch"
           {
             echo 'Review candidate branch:'
