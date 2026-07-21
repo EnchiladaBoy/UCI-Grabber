@@ -499,7 +499,7 @@ jobs:
           overwrite: true
 
   catalog:
-    name: Sign catalog and assemble component assets
+    name: Verify catalog and assemble component assets
     needs: [gate, licenses, app_build, maia_source, maia_runtime]
     if: >-
       always() &&
@@ -527,15 +527,37 @@ jobs:
           pattern: component-maia3-*
           path: dist
           merge-multiple: true
-      - name: Generate deterministic catalog
+      - name: Stage catalog verification data
         shell: bash
-        env:
-          RELEASE_TAG: ${{ needs.gate.outputs.tag }}
-          MAIA_ENABLED: ${{ needs.gate.outputs.maia_enabled }}
-          REVIEW_DIGEST: ${{ needs.gate.outputs.metadata_digest }}
         run: |
           set -euo pipefail
           mkdir -p dist
+          cp catalog/catalog.pub dist/catalog.pub
+          cp catalog/schema/recipe-v1.schema.json dist/recipe-v1.schema.json
+          cp catalog/schema/catalog-v1.schema.json dist/catalog-v1.schema.json
+      - name: Verify and stage the signed empty catalog
+        if: needs.gate.outputs.maia_enabled != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 catalog/verify_catalog.py \
+            --catalog catalog/catalog.json \
+            --signature catalog/catalog.sig \
+            --bootstrap
+          cp catalog/catalog.json dist/catalog.json
+          cp catalog/catalog.sig dist/catalog.sig
+          python3 catalog/verify_catalog.py \
+            --catalog dist/catalog.json \
+            --signature dist/catalog.sig \
+            --bootstrap
+      - name: Generate deterministic reviewed Maia3 catalog
+        if: needs.gate.outputs.maia_enabled == 'true'
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.gate.outputs.tag }}
+          REVIEW_DIGEST: ${{ needs.gate.outputs.metadata_digest }}
+        run: |
+          set -euo pipefail
           epoch="$(git show -s --format=%ct HEAD)"
           generated="$(date -u -d "@$epoch" +'%Y-%m-%dT%H:%M:%SZ')"
           expires="$(date -u -d "@$((epoch + 31536000))" +'%Y-%m-%dT%H:%M:%SZ')"
@@ -546,15 +568,12 @@ jobs:
             --generated-at "$generated"
             --expires-at "$expires"
             --output dist/catalog.json
+            --include-maia3
+            --maia3-license-review-digest "$REVIEW_DIGEST"
           )
-          if test "$MAIA_ENABLED" = true; then
-            arguments+=(--include-maia3 --maia3-license-review-digest "$REVIEW_DIGEST")
-          fi
           python3 catalog/generate_catalog.py "${arguments[@]}"
-          cp catalog/catalog.pub dist/catalog.pub
-          cp catalog/schema/recipe-v1.schema.json dist/recipe-v1.schema.json
-          cp catalog/schema/catalog-v1.schema.json dist/catalog-v1.schema.json
-      - name: Sign exact catalog bytes with the offline catalog key
+      - name: Sign exact reviewed Maia3 catalog bytes with the offline catalog key
+        if: needs.gate.outputs.maia_enabled == 'true'
         shell: bash
         env:
           PRIVATE_KEY_BASE64: ${{ secrets.CATALOG_ED25519_PRIVATE_KEY_BASE64 }}

@@ -17,11 +17,14 @@ hooks, or write outside its immutable installation generation.
   fingerprints and validates the executable independently.
 
 `catalog-public-key.pem` is the production catalog verification key. Its private
-half is never tracked and is retained only in protected release-signing storage
-and the `CATALOG_ED25519_PRIVATE_KEY_BASE64` Actions secret. The release workflow
-checks that the secret key matches `catalog.pub` before it can publish anything.
-Rotating the key requires replacing both public-key files, re-signing the empty
-bundled catalog, and shipping the new verification key in an application update.
+half is never tracked and is retained only in protected release-signing storage.
+App-only releases verify and publish the already signed empty catalog, so the
+private key does not need to leave offline storage. A reviewed Maia3 release
+generates an artifact-specific catalog in CI and therefore additionally requires
+the `CATALOG_ED25519_PRIVATE_KEY_BASE64` Actions secret; the workflow checks that
+key against `catalog.pub` before signing. Rotating the key requires replacing both
+public-key files, re-signing the empty bundled catalog, and shipping the new
+verification key in an application update.
 
 ## Limits
 

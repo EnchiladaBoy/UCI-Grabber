@@ -23,10 +23,15 @@ present. Adding application signing is a future release-hardening task.
 
 Before a stable catalog release:
 
-1. Confirm the production public key in `catalog.pub` and the PEM file matches
-   the private key stored only in protected signing storage and
-   `CATALOG_ED25519_PRIVATE_KEY_BASE64`. The application embeds the public key
-   and bundled catalog, so mismatched bytes fail its tests and the release gate.
+1. Confirm the production public key in `catalog.pub`, the PEM file, and the
+   signature on the empty bundled catalog match the private key retained only in
+   protected signing storage. App-only releases verify and publish those committed
+   catalog bytes without handling the private key. A reviewed Maia3 release must
+   additionally configure `CATALOG_ED25519_PRIVATE_KEY_BASE64`, because its catalog
+   includes hashes of the platform artifacts built in CI. The workflow derives that
+   secret's public key and requires it to match `catalog.pub` before signing. The
+   application embeds the public key and bundled catalog, so mismatched bytes fail
+   its tests and the release gate.
 2. Obtain written review for commercial download/use of the exact Maia3 5M,
    23M, and 79M revisions. Set repository variable
    `MAIA3_MODEL_LICENSE_REVIEW` to the SHA-256 of
