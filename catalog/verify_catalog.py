@@ -34,13 +34,15 @@ def decode_signature(raw: bytes) -> bytes:
 
 
 def verify_signature(catalog: Path, signature: bytes, public_key: Path) -> None:
-    with tempfile.NamedTemporaryFile(prefix="uci-grabber-catalog-", suffix=".sig") as handle:
-        handle.write(signature)
-        handle.flush()
+    # Close the file before OpenSSL opens it. Windows does not allow another
+    # process to reopen a default NamedTemporaryFile while its handle is live.
+    with tempfile.TemporaryDirectory(prefix="uci-grabber-catalog-") as directory:
+        signature_path = Path(directory) / "catalog.sig"
+        signature_path.write_bytes(signature)
         result = subprocess.run(
             [
                 "openssl", "pkeyutl", "-verify", "-pubin", "-inkey", str(public_key),
-                "-rawin", "-in", str(catalog), "-sigfile", handle.name,
+                "-rawin", "-in", str(catalog), "-sigfile", str(signature_path),
             ],
             check=False,
             stdout=subprocess.PIPE,

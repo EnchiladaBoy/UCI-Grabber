@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -16,7 +17,7 @@ MAIA_METADATA = REPOSITORY_ROOT / "packaging" / "maia3" / "component-metadata.js
 MAIA_DIRECT_DOWNLOADS = REPOSITORY_ROOT / "packaging" / "maia3" / "direct-downloads.json"
 sys.path.insert(0, str(ROOT))
 from validate_catalog import load_and_validate, validate_recipe  # noqa: E402
-from verify_catalog import decode_signature  # noqa: E402
+from verify_catalog import decode_signature, verify_signature  # noqa: E402
 
 
 class CatalogTests(unittest.TestCase):
@@ -25,6 +26,24 @@ class CatalogTests(unittest.TestCase):
         trailing_whitespace = b"x" * 63 + b" "
         self.assertEqual(decode_signature(leading_whitespace), leading_whitespace)
         self.assertEqual(decode_signature(trailing_whitespace), trailing_whitespace)
+
+    def test_openssl_can_reopen_temporary_signature(self) -> None:
+        signature = bytes(range(64))
+        observed_paths: list[Path] = []
+
+        def inspect_signature(
+            arguments: list[str], **_: object
+        ) -> subprocess.CompletedProcess[str]:
+            signature_path = Path(arguments[arguments.index("-sigfile") + 1])
+            self.assertEqual(signature_path.read_bytes(), signature)
+            observed_paths.append(signature_path)
+            return subprocess.CompletedProcess(arguments, 0, stdout="", stderr="")
+
+        with mock.patch("verify_catalog.subprocess.run", side_effect=inspect_signature):
+            verify_signature(Path("catalog.json"), signature, Path("public-key.pem"))
+
+        self.assertEqual(len(observed_paths), 1)
+        self.assertFalse(observed_paths[0].exists())
 
     def test_bootstrap_catalog_signature_and_raw_key_match(self) -> None:
         subprocess.run(
