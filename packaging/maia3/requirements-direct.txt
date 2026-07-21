@@ -1,9 +1,23 @@
-# Exact top-level wheel inputs. Release jobs handle the source-only chess 1.11.2
-# distribution separately at its reviewed size and SHA-256, then download this
-# native wheelhouse, record every wheel's SHA-256, require the reviewed inventory,
+# Exact native wheel inputs, including the complete resolved transitive set.
+# Release jobs handle the source-only chess 1.11.2 distribution separately at
+# its reviewed size and SHA-256, require a byte-identical platform inventory,
 # and only then install from local files.
+altgraph==0.17.5
+filelock==3.32.0
+fsspec==2026.6.0
+Jinja2==3.1.6
+macholib==1.16.4 ; sys_platform == "darwin"
+MarkupSafe==3.0.3
+mpmath==1.3.0
+networkx==3.6.1
 numpy==2.2.6
+packaging==26.2
+pefile==2024.8.26 ; sys_platform == "win32"
 pyinstaller==6.21.0
+pyinstaller-hooks-contrib==2026.6
+pywin32-ctypes==0.2.3 ; sys_platform == "win32"
 setuptools==80.9.0
+sympy==1.14.0
 torch==2.11.0
+typing_extensions==4.16.0
 wheel==0.45.1
