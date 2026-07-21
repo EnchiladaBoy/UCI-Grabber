@@ -21,12 +21,12 @@ is separate from curated Maia3: its Windows and macOS runtime publication fails
 closed unless Authenticode and Developer ID/notarization credentials are
 present. Adding application signing is a future release-hardening task.
 
-Before the first catalog release:
+Before a stable catalog release:
 
-1. Generate an Ed25519 production key offline; replace `catalog.pub` and the
-   PEM public key; re-sign the empty bundled catalog; and store only the private
-   key in `CATALOG_ED25519_PRIVATE_KEY_BASE64`. The application includes those
-   catalog files directly, so mismatched bytes fail its bundled-catalog test.
+1. Confirm the production public key in `catalog.pub` and the PEM file matches
+   the private key stored only in protected signing storage and
+   `CATALOG_ED25519_PRIVATE_KEY_BASE64`. The application embeds the public key
+   and bundled catalog, so mismatched bytes fail its tests and the release gate.
 2. Obtain written review for commercial download/use of the exact Maia3 5M,
    23M, and 79M revisions. Set repository variable
    `MAIA3_MODEL_LICENSE_REVIEW` to the SHA-256 of

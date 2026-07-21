@@ -16,12 +16,12 @@ hooks, or write outside its immutable installation generation.
 - An installed executable is never trusted on behalf of FishEye. FishEye
   fingerprints and validates the executable independently.
 
-`catalog-public-key.pem` is a deliberately fail-closed bootstrap key. Its
-private half was discarded. Replace the public key (and the corresponding bytes
-embedded in the app), then re-sign the empty bundled `catalog.json`, before the
-first catalog publication. Keep the private key only in release secrets. The
-release workflow checks that the secret key matches `catalog.pub` before it can
-publish anything.
+`catalog-public-key.pem` is the production catalog verification key. Its private
+half is never tracked and is retained only in protected release-signing storage
+and the `CATALOG_ED25519_PRIVATE_KEY_BASE64` Actions secret. The release workflow
+checks that the secret key matches `catalog.pub` before it can publish anything.
+Rotating the key requires replacing both public-key files, re-signing the empty
+bundled catalog, and shipping the new verification key in an application update.
 
 ## Limits
 
