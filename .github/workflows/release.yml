@@ -368,14 +368,9 @@ jobs:
           python -m pip download \
             --dest wheelhouse \
             --only-binary=:all: \
-            --index-url https://pypi.org/simple \
-            --requirement packaging/maia3/requirements-direct.txt
-          python -m pip download \
-            --dest wheelhouse \
-            --only-binary=:all: \
             --index-url https://download.pytorch.org/whl/cpu \
             --extra-index-url https://pypi.org/simple \
-            'torch==2.11.0'
+            --requirement packaging/maia3/requirements-direct.txt
           mkdir dependency-source
           python -m pip download \
             --dest dependency-source \
