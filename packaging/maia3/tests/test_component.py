@@ -253,7 +253,7 @@ class ComponentTests(unittest.TestCase):
         workflow = (ROOT.parents[1] / ".github" / "workflows" / "release.yml").read_text()
         self.assertLess(
             workflow.index("Require the reviewed wheelhouse before installation"),
-            workflow.index("Install only the reviewed local wheelhouse"),
+            workflow.index("Install only the reviewed wheelhouse"),
         )
         for variable in (
             "MAIA3_WHEELHOUSE_REVIEW_WINDOWS_X86_64",

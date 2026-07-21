@@ -376,6 +376,17 @@ jobs:
             --index-url https://download.pytorch.org/whl/cpu \
             --extra-index-url https://pypi.org/simple \
             'torch==2.11.0'
+          mkdir dependency-source
+          python -m pip download \
+            --dest dependency-source \
+            --no-deps \
+            --no-binary=:all: \
+            'chess==1.11.2'
+          mapfile -t chess_sources < <(find dependency-source -maxdepth 1 -type f)
+          test "${#chess_sources[@]}" = 1
+          python packaging/maia3/verify_file.py "${chess_sources[0]}" \
+            --bytes 6131385 \
+            --sha256 a8b43e5678fdb3000695bdaa573117ad683761e5ca38e591c4826eba6d25bb39
           python packaging/maia3/build_wheel_lock.py \
             --wheelhouse wheelhouse \
             --platform '${{ matrix.platform }}' \
@@ -398,7 +409,7 @@ jobs:
             "$RUNNER_TEMP/WHEELHOUSE.lock.json" \
             --expected "${REVIEWED_WHEELHOUSE_SHA256:-}" \
             --label '${{ matrix.platform }} wheelhouse'
-      - name: Install only the reviewed local wheelhouse and pinned Maia3 source
+      - name: Install only the reviewed wheelhouse and pinned source archives
         shell: bash
         run: |
           set -euo pipefail
@@ -407,6 +418,12 @@ jobs:
             --find-links wheelhouse \
             --require-hashes \
             --requirement "$RUNNER_TEMP/maia3-wheels.txt"
+          mapfile -t chess_sources < <(find dependency-source -maxdepth 1 -type f)
+          test "${#chess_sources[@]}" = 1
+          python -m pip install \
+            --no-deps \
+            --no-build-isolation \
+            "${chess_sources[0]}"
           python -m pip install \
             --no-deps \
             --no-build-isolation \
