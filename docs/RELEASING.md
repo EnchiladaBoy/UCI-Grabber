@@ -1,73 +1,87 @@
-# Release and compliance gates
+# Release process
 
-UCI Grabber releases contain the Apache-2.0 application, compatible Rust
-dependency notices, and one small UCI Grabber launcher per supported platform.
-They do not contain Maia3, CPython, PyTorch, NumPy, python-chess, or Maia
-checkpoint bytes. A user-selected install retrieves those exact bytes directly
-from immutable upstream URLs and assembles the portable engine locally.
+UCI Grabber releases contain the Apache-2.0 application, Rust dependency
+notices, and one small UCI Grabber launcher per supported platform. They do not
+contain Maia3, CPython, PyTorch, NumPy, python-chess, or Maia checkpoint bytes.
+A user-selected install retrieves the reviewed bytes from their upstream
+publishers and assembles the portable engine locally.
 
-Every stable tag builds portable application and launcher archives for Windows
-x86-64, macOS ARM64, Linux x86-64, and Linux ARM64. Windows carries the
-no-console `UCI-Grabber.exe` plus `uci-grabber-cli.exe`; macOS and Linux carry
-`uci-grabber`. The packaged `portable.flag` keeps mutable state and installed
-engines in `UCI-Grabber-Data/` beside the extracted application.
+Stable releases target Windows x86-64, macOS ARM64, Linux x86-64, and Linux
+ARM64. Windows includes the no-console `UCI-Grabber.exe` and
+`uci-grabber-cli.exe`; macOS and Linux use `uci-grabber`. The packaged
+`portable.flag` keeps mutable state and installed engines in
+`UCI-Grabber-Data/` beside the extracted application.
 
-Linux x86-64 and ARM64 artifacts are built natively on Ubuntu 22.04 LTS
-(Jammy) and require glibc 2.35 or newer on the matching architecture. Both
-Linux jobs inspect the exact executable copied into the release archive: it
-must be a matching ELF64 binary, may not require a glibc symbol newer than
-2.35, and must have no unresolved dependency under `ldd` on the Jammy runner.
+Linux artifacts are built natively on Ubuntu 22.04 LTS and require glibc 2.35
+or newer on the matching architecture. Each Linux job inspects the executable
+copied into the archive: it must be a matching ELF64 binary, require no glibc
+symbol newer than 2.35, and have no unresolved dependency on the build runner.
 
 No Authenticode, Apple Developer ID, notarization credential, repository
-variable, private release secret, or local GitHub CLI login is required.
-Required macOS ad-hoc signatures provide no publisher identity. A one-time
-Ed25519 key authenticates only the immutable catalog embedded in one app
-release; it is not native-code or publisher signing.
+variable, persistent private release secret, or local GitHub CLI login is
+required. Required macOS ad-hoc signatures provide no publisher identity. A
+one-time Ed25519 key authenticates only the immutable catalog embedded in one
+application release; it is not native-code or publisher signing.
 
-## Checked-in review
+## Review gates
 
 `packaging/maia3/release-review.json` is the fail-closed release attestation.
-`review_digest.py verify-release --tag vMAJOR.MINOR.PATCH` checks the exact tag,
-component metadata, direct-download manifest, reviewed distribution decision,
-checkpoint-term facts, and digest of every active launcher/catalog/release
-input.
+`review_digest.py verify-release --tag vMAJOR.MINOR.PATCH` verifies the exact
+tag, component metadata, direct-download manifest, reviewed distribution
+decision, checkpoint-term facts, and digest of every active release input.
 
-`direct-downloads.json` pins portable Python, Maia source, python-chess, and the
-runtime-only wheel set by immutable HTTPS URL, byte count, SHA-256, archive
-format, and collision-free destination. Offline validation also requires every
-wheel to match the appropriate checked platform inventory. The 5M and 23M
-model cards apply CC BY 4.0 only to the paper, point to the Maia repository for
-code and weights terms, and have no independent weights LICENSE; the 79M card
-states AGPLv3. The review consequently approves direct end-user retrieval only.
+`direct-downloads.json` pins portable Python, Maia source, python-chess, and
+runtime-only wheels by immutable HTTPS URL, byte count, SHA-256, archive
+format, and collision-free destination. Component metadata separately pins the
+checkpoint revisions and hashes. The reviewed distribution conclusions live
+in `release-review.json`; the corresponding user-facing license and source
+statements live in
+`DIRECT-DOWNLOAD-NOTICES.txt`. Those files are the canonical records—do not
+duplicate their detailed conclusions in release prose.
 
-## Tag publication flow
+Any change to a file listed in `RELEASE_INPUTS` in `review_digest.py` makes the
+attestation stale, including documentation such as the packaged `README.md`.
+Changes to component metadata or `direct-downloads.json` also require their
+individual reviewed digests to be updated.
 
-1. Run all Rust, Python, schema, metadata, catalog, formatting, lint, and
-   workflow checks.
-2. Confirm `python3 packaging/maia3/review_digest.py verify-release --tag
-   vMAJOR.MINOR.PATCH` succeeds on the exact commit to tag.
-3. Push that commit and then its stable tag using the repository's existing SSH
-   write access. The repository may be public; local `gh` authentication is not
-   part of the process.
-4. GitHub Actions builds and packages the four UCI Grabber launchers. It then
-   hashes them and combines those hashes with the reviewed direct-upstream
-   artifacts and checkpoint hashes to generate the populated catalog.
-5. Actions generates a one-time Ed25519 key, signs the exact catalog bytes, and
-   discards the private key. Every app build embeds that same populated
-   catalog, signature, and public key. Remote catalog assets are
-   version-specific and never use a mutable `releases/latest` URL.
-6. The final job creates or reuses the exact draft release, replaces every
-   expected asset on a rerun, rejects any extra/missing asset, and compares
-   remote SHA-256 digests with the staged files before publishing and marking it
-   latest. Publication alone receives job-scoped `contents: write`.
+## Prepare a release
 
-The release contains four app archives, four UCI Grabber Maia launcher
-archives, `MAIA3-DIRECT-DOWNLOAD-NOTICES.txt`, versioned catalog
-JSON/signature/public-key assets, the signed empty generic catalog retained for
-v0.1.0 compatibility, both schema documents, and `SHA256SUMS`. It contains no
-third-party engine/runtime/checkpoint asset.
+1. Update the application version in `Cargo.toml` and `Cargo.lock`. Update the
+   release tag in `review_digest.py`, `release-review.json`, and the CI review
+   assertion. Search for the previous version and tag to catch documentation
+   examples and test fixtures.
+2. Review every metadata, download, assembly, catalog, workflow, and launcher
+   change. Update the checked component and direct-download digests only after
+   that review is complete.
+3. Run the complete check set in [DEVELOPMENT.md](DEVELOPMENT.md), plus any
+   platform-specific smoke checks required by the release changes.
+4. Run `python3 packaging/maia3/review_digest.py inputs`, review the complete
+   `RELEASE_INPUTS` diff, and record the resulting digest as
+   `release_inputs_sha256` in `release-review.json`.
+5. Run `python3 packaging/maia3/review_digest.py verify-release --tag
+   vMAJOR.MINOR.PATCH` on the exact commit that will be tagged.
 
-Changing an upstream URL, byte count, digest, checkpoint revision, launcher,
-entry point, extraction rule, review decision, workflow, catalog trust design,
-or tag invalidates the checked review. These gates document the maintainer's
-release decision; they are not legal advice.
+## Publish a tag
+
+1. Push the reviewed commit, then its stable `vMAJOR.MINOR.PATCH` tag, using the
+   repository's existing SSH write access.
+2. GitHub Actions builds and packages the four UCI Grabber launchers, hashes
+   them, and combines those hashes with the reviewed upstream artifacts to
+   generate the populated catalog.
+3. Actions creates a one-time Ed25519 key, signs the exact catalog bytes, embeds
+   that catalog, signature, and public key in every application build, and
+   discards the private key. Remote catalog assets are version-specific and
+   never use a mutable `releases/latest` URL.
+4. The final job creates or reuses the exact draft release, replaces every
+   expected asset on a rerun, rejects extra or missing assets, and compares all
+   remote SHA-256 digests with the staged files before publication. Only this
+   job receives job-scoped `contents: write`.
+
+The workflow's publish job is the authoritative asset whitelist. In summary,
+the release includes four application archives, four Maia launcher components,
+direct-download notices, versioned catalog assets, the backward-compatible
+empty bootstrap catalog, both schemas, and `SHA256SUMS`. It includes no
+third-party engine, runtime, dependency, or checkpoint asset.
+
+These gates record the maintainer's release decision; they are not legal
+advice.

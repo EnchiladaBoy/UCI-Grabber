@@ -9,6 +9,7 @@
 /Cargo.toml text eol=lf
 /LICENSE text eol=lf
 /README.md text eol=lf
+/docs/assets/*.webp binary
 /catalog/schema/*.json text eol=lf
 /catalog/validate_catalog.py text eol=lf
 /catalog/verify_catalog.py text eol=lf

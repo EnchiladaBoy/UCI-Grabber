@@ -31,6 +31,7 @@ RELEASE_INPUTS = (
     "Cargo.toml",
     "LICENSE",
     "README.md",
+    "docs/assets/uci-grabber-hero.webp",
     "catalog/catalog-public-key.pem",
     "catalog/catalog.json",
     "catalog/catalog.pub",

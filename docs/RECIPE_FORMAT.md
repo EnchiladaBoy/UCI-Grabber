@@ -4,11 +4,14 @@ A custom recipe describes complete, directly runnable UCI packages. It cannot
 describe arbitrary installation logic. Raw weights without a compatible
 zero-argument runtime are invalid.
 
-The normative wire shape is `catalog/schema/recipe-v1.schema.json`. Important
+`catalog/schema/recipe-v1.schema.json` defines the serialized wire shape and is
+useful for publisher-side checks. UCI Grabber's own validation is authoritative
+and also enforces cross-field rules that JSON Schema does not express. Important
 rules are:
 
 - `id` and model IDs are stable lowercase identifiers; `version` is immutable.
-- All artifact URLs use HTTPS and identify immutable bytes.
+- All artifact URLs use HTTPS. Publishers should use stable, versioned URLs;
+  the declared byte count and SHA-256 identify the bytes UCI Grabber accepts.
 - Every artifact has an exact positive `byte_count` and lowercase SHA-256.
 - `destination`, `executable`, and `working_directory` are forward-slash,
   relative paths contained by the installation generation. Every component must
@@ -22,10 +25,10 @@ rules are:
 - One platform package may declare at most 2 GiB across all downloaded artifacts.
   Extraction separately enforces a generation-wide 2 GiB output limit, 40,000
   filesystem-entry limit, and 1 GiB limit for an individual output file.
-- Archive links are never preserved. A relative link may be flattened to a
-  regular file only when its complete target chain stays inside that archive and
-  ends at a regular file. Absolute, escaping, unresolved, cyclic, directory, and
-  special-file links are rejected.
+- ZIP symbolic links, tar hard links, and other special entries are rejected. A
+  relative tar symbolic link may be materialized as a regular file only when
+  its complete target chain stays inside that archive and ends at a regular
+  file. Absolute, escaping, unresolved, cyclic, and directory targets fail.
 - The executable takes no command-line arguments and must pass `uci`,
   `isready`, a legal depth-one search from the starting position, and `quit`.
 

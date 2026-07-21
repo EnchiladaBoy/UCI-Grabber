@@ -23,14 +23,15 @@ with the recipe before extraction. Extraction applies generation-wide 2 GiB and
 destinations, Windows-invalid or aliasing names, entry/size bombs, and any write
 outside staging. Case-folding collisions are additionally rejected whenever the
 destination filesystem is case-insensitive; case-distinct paths remain distinct
-on a case-sensitive filesystem. Relative archive links are accepted only when
-they resolve inside the same archive to a regular file and are flattened to
-regular files; absolute, escaping, cyclic, unresolved, and directory links are
-rejected. A bounded, well-formed global PAX `comment` record is ignored;
+on a case-sensitive filesystem. ZIP symbolic links, tar hard links, and other
+special entries are rejected. A contained relative tar symbolic link is
+flattened to a regular file only when its complete target chain ends at a
+regular file; absolute, escaping, cyclic, unresolved, and directory targets
+fail. A bounded, well-formed global PAX `comment` record is ignored;
 behavior-changing global PAX keys and every other special archive member are
-rejected. Activation is an atomic rename into an immutable versioned generation.
-Cancellation and crashes leave the previous generation untouched; recoverable
-staging directories are cleaned on the next startup.
+rejected. Activation is an atomic rename into an immutable versioned
+generation. Cancellation and crashes leave the previous generation untouched;
+recoverable staging directories are cleaned on the next startup.
 
 For the curated Maia package, UCI Grabber personalizes the reviewed launcher
 with a digest, regular-file count, and byte count for every other package file.
@@ -43,14 +44,15 @@ that fingerprints the launcher, this is change detection rather than standalone
 authenticity: coordinated replacement of both launcher and payload requires an
 independent checksum or trusted origin check.
 
-The ready check runs the zero-argument executable with a restricted working
-directory and bounded stdin/stdout/stderr, startup, readiness, and search
-timeouts. The curated Maia launcher replaces itself with Python on Unix. On
-Windows it joins a kill-on-close job before Python starts, so cancelling the
-launcher also terminates Python and its descendants. UCI success does not grant
-FishEye trust. “Use in FishEye” only passes the path to `fisheye gui
---add-external-engine`; FishEye independently inspects, fingerprints, tests, and
-asks the user to approve it.
+The ready check runs the zero-argument executable with piped stdin, bounded
+stdout, discarded stderr, its declared executable parent as the working
+directory, and startup, readiness, search, and quit timeouts. The curated Maia
+launcher replaces itself with Python on Unix. On Windows it joins a
+kill-on-close job before Python starts, so cancelling the launcher also
+terminates Python and its descendants. UCI success does not grant FishEye
+trust. A FishEye handoff only passes the path to `fisheye gui
+--add-external-engine`; FishEye independently inspects, fingerprints, tests,
+and asks the user to approve it.
 
 There is no background engine/artifact download, automatic executable
 replacement, install hook, shell expansion, telemetry, or direct write to

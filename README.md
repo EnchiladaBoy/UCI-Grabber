@@ -1,68 +1,91 @@
 # UCI Grabber
 
-UCI Grabber installs complete, zero-argument UCI chess engine packages for use
-with [FishEye](https://github.com/EnchiladaBoy/FishEye). It is a separate
-Apache-2.0 application and never writes FishEye settings or grants an engine
-trust on FishEye's behalf. Every installed package is also a standard portable
-UCI engine: users of another compatible chess GUI can copy or reveal the engine
-path and add it there without using the FishEye handoff.
+UCI Grabber downloads and assembles ready-to-use UCI chess engine packages.
+Its curated catalog currently provides Maia3 5M, 23M, and 79M for
+[FishEye](https://github.com/EnchiladaBoy/FishEye) or any chess GUI that accepts
+a zero-argument UCI engine executable.
 
-The source-tree bootstrap catalog is deliberately empty. Each production app
-release instead embeds its reviewed, populated catalog after UCI Grabber's four
-small platform launchers have been built and hashed. The v0.2.0 catalog offers
-Maia3 5M, 23M, and 79M. On install, UCI Grabber retrieves portable CPython,
-Maia3 source, exact runtime dependencies, and the selected checkpoint directly
-from their upstream publishers, verifies every byte count and SHA-256, and
-assembles the private portable engine locally. Maia, dependency, and checkpoint
-bytes are not repackaged as UCI Grabber GitHub release assets. You can also
-import strict, data-only recipes for other engines. Custom recipes cannot
-contain commands, hooks, environment variables, or absolute paths. Their
-downloaded executable is still arbitrary native code: UCI testing runs it with
-your account permissions and no OS sandbox, so explicit approval is required
-first.
+UCI Grabber is a separate application: it never edits FishEye settings or
+approves an engine on FishEye's behalf. FishEye integration is optional; every
+installed engine can also be copied or revealed and added to another GUI.
 
-A build made directly from the tagged source tree retains that empty bootstrap
-key and cannot authenticate the different one-time key generated later by
-release CI. **Verify release catalog** and `list --refresh` only re-verify the
-catalog already bound to a packaged production release; they do not populate a
-source build. Use the matching GitHub Release archive when you want the curated
-Maia catalog.
+![Verified UCI engine package flow from chess knight through catalog checks](docs/assets/uci-grabber-hero.webp)
 
-Release archives are portable and carry no trusted publisher signature. They
-use no Authenticode or Apple Developer ID credentials and are not notarized. A
-one-time, release-specific Ed25519 key authenticates the immutable catalog and
-its artifact hashes; it is generated before the app build and is not a native
-code or publisher signature. Windows or macOS may therefore warn before first
-launch; verify the published checksums and release origin before proceeding.
-macOS build tools may apply required ad-hoc signatures, which provide no
-publisher identity or trust.
+## Install
 
-Keep the complete extracted application folder together. On Windows,
-`UCI-Grabber.exe` launches the no-console GUI and `uci-grabber-cli.exe` provides
-terminal commands; macOS and Linux use `uci-grabber`. Packaged builds keep their
-mutable state and portable engine library in `UCI-Grabber-Data/` beside the
-application instead of a machine-specific application-data location.
-Version 0.1.0 used the operating system's application-data directory; upgrading
-does not delete that legacy state. Advanced users can still inspect it with the
-CLI's explicit `--data-dir` option and re-import any custom recipes they need.
-Linux x86-64 and ARM64 release archives require glibc 2.35 or newer (Ubuntu
-22.04 LTS or an equivalent distribution) on the matching CPU architecture.
+Download the application archive for your system from the
+[latest release](https://github.com/EnchiladaBoy/UCI-Grabber/releases/latest):
 
-## Quick start
+| System | Application archive | Start UCI Grabber with |
+| --- | --- | --- |
+| Windows x86-64 | `uci-grabber-windows-x86_64.zip` | `UCI-Grabber.exe` |
+| macOS Apple silicon | `UCI-Grabber-macos-aarch64.app.zip` | `UCI Grabber.app` |
+| Linux x86-64 | `uci-grabber-linux-x86_64.tar.gz` | `uci-grabber` |
+| Linux ARM64 | `uci-grabber-linux-aarch64.tar.gz` | `uci-grabber` |
 
-1. Extract the whole release folder to a writable location and open UCI Grabber.
-   There is no system installer and no administrator setup.
-2. Choose Maia3 5M, 23M, or 79M from the catalog embedded in that release, then
-   select **Install** or **Install & open in FishEye**.
-3. UCI Grabber downloads the exact upstream source, portable Python runtime,
-   dependency wheels, and model, verifies them, assembles the portable package,
-   binds its launcher to the assembled file contents, and tests the resulting
-   engine. The ready screen can copy the engine
-   executable path or open its package folder for any UCI-compatible chess GUI.
-   The FishEye option opens FishEye 1.8.0 or newer at its own review screen;
-   FishEye still asks before saving the engine.
+The macOS build requires macOS 12.3 or newer. Linux builds require glibc 2.35
+or newer, as provided by Ubuntu 22.04 LTS and equivalent distributions. Assets
+named `uci-grabber-maia3-launcher-*` are internal components and are not
+standalone applications.
 
-## Build and run
+1. Extract the complete archive to a writable location and open UCI Grabber.
+2. Choose a Maia3 model, then select **Install** or
+   **Install & open in FishEye**.
+3. When installation finishes, use the engine directly in FishEye or select
+   **Copy engine path** / **Open package folder** for another chess GUI.
+
+There is no system installer or administrator setup. Keep the extracted
+application folder together: releases store settings and installed engines in
+`UCI-Grabber-Data/` beside the application so the complete folder remains
+portable.
+
+FishEye integration requires FishEye 1.8.0 or newer. Version 0.1.0 stored its
+state in the operating system's application-data directory; upgrading does not
+delete that legacy state. Advanced users can inspect it with the CLI's
+`--data-dir` option and re-import any custom recipes they still need.
+
+## Security
+
+Release archives are not Authenticode-signed, Apple Developer ID-signed, or
+notarized, so Windows or macOS may warn on first launch. Verify the archive
+against the release's `SHA256SUMS` file and confirm that it came from this
+repository.
+
+For curated installs, UCI Grabber downloads Maia3, portable Python,
+dependencies, and the selected checkpoint directly from their upstream
+publishers. It checks every declared size and SHA-256 before assembling and
+testing the engine locally. Those third-party files are not republished in UCI
+Grabber release archives.
+
+Custom recipes are data-only, but the engine they download is still native
+code. Its UCI test runs with your account permissions and no operating-system
+sandbox, so approve a custom recipe only when you trust its publisher and exact
+artifact hashes. See the [security model](docs/SECURITY.md) for the full trust
+boundaries and extraction limits.
+
+## Command line
+
+The GUI covers the normal install workflow. The CLI also supports scripting,
+custom recipes, integrity checks, FishEye handoff, and removal:
+
+```console
+uci-grabber list
+uci-grabber list --refresh
+uci-grabber import ./engine-recipe.json
+uci-grabber install maia3 --model maia3-5m
+uci-grabber status
+uci-grabber open-in-fisheye INSTALL_ID
+uci-grabber remove INSTALL_ID --confirm
+```
+
+Copy `INSTALL_ID` from `status`. Portable commands are `./uci-grabber` on
+Linux, `.\uci-grabber-cli.exe` on Windows, and
+`./UCI\ Grabber.app/Contents/MacOS/uci-grabber` on macOS. Pass `--data-dir PATH`
+before a subcommand to inspect a specific data directory. Installing an
+imported recipe also requires `--approve-unreviewed`; use `status --repair`
+only to clean interrupted staging and repair activated-generation records.
+
+## Build from source
 
 Rust 1.92 or newer is required.
 
@@ -70,40 +93,34 @@ Rust 1.92 or newer is required.
 cargo run --release
 ```
 
-The GUI has **Catalog**, **Installed**, and **Custom Recipes** views. An install
-is downloaded into staging, checked against its declared byte count and SHA-256,
-safely extracted, tested with `uci`, `isready`, and a legal depth-one move from
-the starting position, then atomically activated as an immutable generation.
+A source build intentionally uses the signed, empty bootstrap catalog because
+the curated Maia3 catalog depends on platform launchers built during release
+CI. Use an official release archive to install from the curated catalog; source
+builds can still import custom recipes.
 
-Useful CLI commands:
+Core checks are:
 
 ```console
-uci-grabber list
-uci-grabber list --refresh  # packaged releases: re-verifies their bound catalog
-uci-grabber import ./engine-recipe.json
-uci-grabber install recipe-id --model model-id --approve-unreviewed
-uci-grabber status --repair
-uci-grabber open-in-fisheye 'recipe-id:model-id:1.0.0:linux-x86_64'
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo test --workspace --all-targets --all-features --locked
+python3 -m unittest discover -s catalog/tests -v
 ```
 
-Use `uci-grabber-cli.exe` in place of `uci-grabber` for these commands on
-Windows.
+See the [development guide](docs/DEVELOPMENT.md) for Linux build dependencies
+and the complete local CI check set.
 
-`open-in-fisheye` launches only:
+## Documentation
 
-```text
-fisheye gui --add-external-engine PATH
-```
-
-FishEye still fingerprints, tests, and asks the user to approve that path.
-The GUI always provides **Copy engine path** and **Open package folder**
-fallbacks.
-
-See [the recipe format](docs/RECIPE_FORMAT.md), [security model](docs/SECURITY.md),
-and [release process](docs/RELEASING.md) for the exact contracts and limits.
+- [Development guide](docs/DEVELOPMENT.md)
+- [Custom recipe format](docs/RECIPE_FORMAT.md)
+- [Catalog and recipe contract](catalog/README.md)
+- [Security model](docs/SECURITY.md)
+- [Release process](docs/RELEASING.md)
+- [Maia3 packaging notes](packaging/maia3/README.md)
 
 ## License
 
-UCI Grabber itself is licensed under Apache-2.0. Engines, runtimes, dependencies,
-and models retrieved directly from their publishers retain their own licenses;
-review the metadata shown before install.
+UCI Grabber is licensed under [Apache-2.0](LICENSE). Engines, runtimes,
+dependencies, and models retain their own licenses; review the metadata shown
+before installation.

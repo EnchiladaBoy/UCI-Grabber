@@ -22,6 +22,25 @@ PLATFORMS = {
     "linux-x86_64",
     "linux-aarch64",
 }
+REPOSITORY_URL = "https://github.com/EnchiladaBoy/UCI-Grabber"
+RAW_REPOSITORY_URL = "https://raw.githubusercontent.com/EnchiladaBoy/UCI-Grabber"
+REPOSITORY_MARKDOWN_LINK = re.compile(
+    r"\]\(((?:docs|catalog|packaging)/[^)\s]+\.md)\)"
+)
+REPOSITORY_MEDIA_LINK = re.compile(r"\]\((docs/assets/[^)\s]+)\)")
+
+
+def packaged_readme(path: Path, version: str) -> bytes:
+    """Pin repository links to the release represented by the archive."""
+    markdown = path.read_text(encoding="utf-8")
+    markdown = REPOSITORY_MARKDOWN_LINK.sub(
+        lambda match: f"]({REPOSITORY_URL}/blob/v{version}/{match.group(1)})",
+        markdown,
+    )
+    return REPOSITORY_MEDIA_LINK.sub(
+        lambda match: f"]({RAW_REPOSITORY_URL}/v{version}/{match.group(1)})",
+        markdown,
+    ).encode("utf-8")
 
 
 def macos_plist(version: str) -> bytes:
@@ -53,7 +72,7 @@ def payload(
 ) -> list[tuple[str, bytes, int]]:
     documents = {
         "LICENSE": license_file.read_bytes(),
-        "README.md": readme.read_bytes(),
+        "README.md": packaged_readme(readme, version),
         "THIRD-PARTY-LICENSES.txt": third_party.read_bytes(),
     }
     if platform == "macos-aarch64":

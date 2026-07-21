@@ -1,5 +1,9 @@
 /target/
 /dist/
+/release-assets/
+/release-inputs/
+/about.toml
+/THIRD-PARTY-LICENSES.txt
 *.tmp
 *.part
 *.py[cod]

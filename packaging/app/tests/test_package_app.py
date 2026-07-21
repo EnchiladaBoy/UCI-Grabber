@@ -75,6 +75,32 @@ class ApplicationPackagingTests(unittest.TestCase):
             )
             self.assertIn("UCI Grabber.app/Contents/Resources/portable.flag", names)
 
+    def test_packaged_readme_pins_repository_links_to_release_tag(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            inputs = self.inputs(root)
+            inputs[2].write_text(
+                "![Hero](docs/assets/hero.webp)\n"
+                "[Security](docs/SECURITY.md)\n"
+                "[License](LICENSE)\n",
+                encoding="utf-8",
+            )
+            files = package_app.payload("linux-x86_64", "1.2.3", *inputs)
+            readme = next(
+                contents for name, contents, _mode in files if name.endswith("/README.md")
+            ).decode("utf-8")
+            self.assertIn(
+                "https://github.com/EnchiladaBoy/UCI-Grabber/"
+                "blob/v1.2.3/docs/SECURITY.md",
+                readme,
+            )
+            self.assertIn(
+                "https://raw.githubusercontent.com/EnchiladaBoy/"
+                "UCI-Grabber/v1.2.3/docs/assets/hero.webp",
+                readme,
+            )
+            self.assertIn("[License](LICENSE)", readme)
+
 
 if __name__ == "__main__":
     unittest.main()

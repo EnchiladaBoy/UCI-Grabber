@@ -24,7 +24,6 @@ jobs:
     outputs:
       tag: ${{ steps.metadata.outputs.tag }}
       version: ${{ steps.metadata.outputs.version }}
-      maia_enabled: ${{ steps.metadata.outputs.maia_enabled }}
       metadata_digest: ${{ steps.metadata.outputs.metadata_digest }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -66,7 +65,6 @@ jobs:
           {
             echo "tag=$REQUESTED_TAG"
             echo "version=$version"
-            echo 'maia_enabled=true'
             echo "metadata_digest=$metadata_digest"
           } >> "$GITHUB_OUTPUT"
       - name: Validate release-side source
@@ -115,7 +113,6 @@ jobs:
   launcher_build:
     name: Maia3 direct-download launcher · ${{ matrix.platform }}
     needs: [gate, licenses]
-    if: needs.gate.outputs.maia_enabled == 'true'
     timeout-minutes: 60
     strategy:
       fail-fast: false
