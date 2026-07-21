@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/EnchiladaBoy/UCI-Grabber/raw/main/catalog/schema/catalog-v1.schema.json",
+  "title": "UCI Grabber signed catalog v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "generated_at", "expires_at", "recipes"],
+  "properties": {
+    "schema": { "const": "uci-grabber-catalog/v1" },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "expires_at": { "type": "string", "format": "date-time" },
+    "recipes": {
+      "type": "array",
+      "maxItems": 1024,
+      "items": { "$ref": "recipe-v1.schema.json" }
+    }
+  }
+}

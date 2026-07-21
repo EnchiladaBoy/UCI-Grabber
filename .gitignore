@@ -1,0 +1,10 @@
+/target/
+/dist/
+*.tmp
+*.part
+*.py[cod]
+__pycache__/
+catalog-cache/
+*-private.pem
+*.p12
+*.pfx

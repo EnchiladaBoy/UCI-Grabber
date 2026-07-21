@@ -1,0 +1,174 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/EnchiladaBoy/UCI-Grabber/raw/main/catalog/schema/recipe-v1.schema.json",
+  "title": "UCI Grabber recipe v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "id",
+    "name",
+    "version",
+    "description",
+    "publisher",
+    "license",
+    "homepage",
+    "minimum_fisheye_version",
+    "models"
+  ],
+  "properties": {
+    "schema": { "const": "uci-grabber-recipe/v1" },
+    "id": { "$ref": "#/$defs/id" },
+    "name": { "$ref": "#/$defs/nonEmpty" },
+    "version": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$",
+      "maxLength": 80
+    },
+    "description": { "$ref": "#/$defs/longText" },
+    "publisher": { "$ref": "#/$defs/publisher" },
+    "license": { "$ref": "#/$defs/license" },
+    "homepage": { "$ref": "#/$defs/httpsUrl" },
+    "minimum_fisheye_version": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$",
+      "maxLength": 64
+    },
+    "models": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "items": { "$ref": "#/$defs/model" }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "minLength": 1,
+      "maxLength": 80
+    },
+    "nonEmpty": {
+      "type": "string",
+      "pattern": "^(?=.*\\S)[^\\u0000-\\u001F\\u007F]+$",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "longText": {
+      "type": "string",
+      "pattern": "^(?=.*\\S)[^\\u0000-\\u001F\\u007F]+$",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "httpsUrl": {
+      "type": "string",
+      "pattern": "^https://(?![^/?#\\s]*@)[^/?#\\s]+(?:[/?#][^\\s]*)?$",
+      "maxLength": 2048
+    },
+    "relativePath": {
+      "type": "string",
+      "oneOf": [
+        { "const": "." },
+        {
+          "pattern": "^(?!/)(?!.*\\\\)(?!.*//)(?!.*/$)(?!.*(?:^|/)\\.\\.?(?:/|$))(?!.*[. ](?:/|$))(?!.*[<>:\"|?*\\u0000-\\u001F\\u007F])(?!.*(?:^|/)(?:[Cc][Oo][Nn]|[Pp][Rr][Nn]|[Aa][Uu][Xx]|[Nn][Uu][Ll]|[Cc][Oo][Nn][Ii][Nn]\\$|[Cc][Oo][Nn][Oo][Uu][Tt]\\$|[Cc][Ll][Oo][Cc][Kk]\\$|[Cc][Oo][Mm][1-9¹²³]|[Ll][Pp][Tt][1-9¹²³])(?:\\.[^/]*)?(?:/|$)).+$"
+        }
+      ],
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "publisher": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "url"],
+      "properties": {
+        "name": { "$ref": "#/$defs/nonEmpty" },
+        "url": { "$ref": "#/$defs/httpsUrl" }
+      }
+    },
+    "license": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["spdx", "name", "url", "source_url"],
+      "properties": {
+        "spdx": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9.+-]+|LicenseRef-[A-Za-z0-9.-]+)$",
+          "maxLength": 128
+        },
+        "name": { "$ref": "#/$defs/nonEmpty" },
+        "url": { "$ref": "#/$defs/httpsUrl" },
+        "source_url": { "$ref": "#/$defs/httpsUrl" }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "url", "byte_count", "sha256", "format", "destination"],
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "const": "model" } }, "required": ["kind"] },
+          "then": { "properties": { "byte_count": { "maximum": 419430400 } } }
+        }
+      ],
+      "properties": {
+        "kind": { "enum": ["runtime", "model", "other"] },
+        "url": { "$ref": "#/$defs/httpsUrl" },
+        "byte_count": { "type": "integer", "minimum": 1, "maximum": 1073741824 },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "format": { "enum": ["raw", "zip", "tar.gz", "tar.zst"] },
+        "destination": {
+          "allOf": [
+            { "$ref": "#/$defs/relativePath" },
+            { "not": { "const": "." } }
+          ]
+        }
+      }
+    },
+    "package": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["platform", "artifacts", "executable", "working_directory"],
+      "properties": {
+        "platform": {
+          "enum": [
+            "linux-x86_64",
+            "linux-aarch64",
+            "macos-x86_64",
+            "macos-aarch64",
+            "windows-x86_64",
+            "windows-aarch64"
+          ]
+        },
+        "artifacts": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": { "$ref": "#/$defs/artifact" }
+        },
+        "executable": {
+          "allOf": [
+            { "$ref": "#/$defs/relativePath" },
+            { "not": { "const": "." } }
+          ]
+        },
+        "working_directory": { "$ref": "#/$defs/relativePath" }
+      }
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "description", "packages"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "name": { "$ref": "#/$defs/nonEmpty" },
+        "description": { "$ref": "#/$defs/longText" },
+        "packages": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 6,
+          "items": { "$ref": "#/$defs/package" }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,9 @@
+# Exact top-level build/runtime inputs. Release jobs first download a native
+# wheelhouse, record every wheel's SHA-256, require the platform inventory's
+# separately reviewed digest, and only then install from that local wheelhouse
+# with pip --require-hashes.
+chess==1.11.2
+numpy==2.2.6
+pyinstaller==6.21.0
+setuptools==80.9.0
+wheel==0.45.1

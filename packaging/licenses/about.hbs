@@ -1,0 +1,19 @@
+UCI Grabber - Third-Party License Notices
+=========================================
+
+This file is generated from the exact Cargo.lock dependency graph by
+cargo-about. Source for each crate is available from its repository or the
+listed crates.io package page.
+
+{{#each licenses}}
+--------------------------------------------------------------------------------
+{{{name}}}
+
+Used by:
+{{#each used_by}}
+- {{{crate.name}}} {{{crate.version}}}: {{#if crate.repository}}{{{crate.repository}}}{{else}}https://crates.io/crates/{{{crate.name}}}/{{{crate.version}}}{{/if}}
+{{/each}}
+
+{{{text}}}
+
+{{/each}}

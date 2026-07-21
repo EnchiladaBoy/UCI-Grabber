@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: format, lint, test, and release metadata
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: "1.92.0"
+          components: rustfmt, clippy
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+      - name: Install Linux GUI build dependencies
+        run: |
+          sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
+            timeout 5m apt-get -o Acquire::Retries=3 update
+          sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
+            timeout 5m apt-get -o Acquire::Retries=3 install -y \
+            libdbus-1-dev \
+            libegl1-mesa-dev \
+            libgbm-dev \
+            libwayland-dev \
+            libx11-dev \
+            libxcb1-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            libxrandr-dev \
+            pkg-config
+      - name: Validate catalog, schemas, and Maia3 release tooling
+        run: |
+          python3 packaging/maia3/validate_metadata.py
+          python3 -m unittest discover -s packaging/app/tests -v
+          python3 -m unittest discover -s packaging/maia3/tests -v
+          python3 -m unittest discover -s catalog/tests -v
+          python3 catalog/verify_catalog.py \
+            --catalog catalog/catalog.json \
+            --signature catalog/catalog.sig \
+            --bootstrap
+          python3 -m compileall -q packaging/app packaging/maia3 catalog
+      - name: Check Rust formatting
+        run: cargo fmt --all --check
+      - name: Lint all targets and features
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - name: Test all targets and features
+        run: cargo test --workspace --all-targets --all-features --locked

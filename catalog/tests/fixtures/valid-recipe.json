@@ -1,0 +1,43 @@
+{
+  "schema": "uci-grabber-recipe/v1",
+  "id": "fixture-engine",
+  "name": "Fixture Engine",
+  "version": "1.2.3-test.1+fixture",
+  "description": "A complete test-only UCI package.",
+  "publisher": {
+    "name": "UCI Grabber tests",
+    "url": "https://example.test/publisher"
+  },
+  "license": {
+    "spdx": "MIT",
+    "name": "MIT License",
+    "url": "https://example.test/license",
+    "source_url": "https://example.test/source/0123456789abcdef"
+  },
+  "homepage": "https://example.test/fixture-engine",
+  "minimum_fisheye_version": "1.7.0",
+  "models": [
+    {
+      "id": "standard",
+      "name": "Standard",
+      "description": "The fixture model.",
+      "packages": [
+        {
+          "platform": "linux-x86_64",
+          "artifacts": [
+            {
+              "kind": "runtime",
+              "url": "https://example.test/releases/1.2.3/fixture.tar.zst",
+              "byte_count": 42,
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "format": "tar.zst",
+              "destination": "package"
+            }
+          ],
+          "executable": "package/bin/fixture-engine",
+          "working_directory": "package/bin"
+        }
+      ]
+    }
+  ]
+}
