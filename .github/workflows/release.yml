@@ -546,6 +546,7 @@ jobs:
             --bootstrap
           cp catalog/catalog.json dist/catalog.json
           cp catalog/catalog.sig dist/catalog.sig
+          test "$(wc -c < dist/catalog.sig)" = 64
           python3 catalog/verify_catalog.py \
             --catalog dist/catalog.json \
             --signature dist/catalog.sig \
