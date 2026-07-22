@@ -15,7 +15,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parent
 REPOSITORY_ROOT = ROOT.parents[1]
 HEX_64 = re.compile(r"^[0-9a-f]{64}$")
-RELEASE_TAG = "v0.2.0"
+RELEASE_TAG = "v0.2.1"
 RELEASE_REVIEW_PATH = ROOT / "release-review.json"
 COMPONENT_METADATA_PATH = "packaging/maia3/component-metadata.json"
 DIRECT_DOWNLOADS_PATH = "packaging/maia3/direct-downloads.json"

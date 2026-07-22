@@ -1,6 +1,6 @@
 {
   "schema": 2,
-  "release_tag": "v0.2.0",
+  "release_tag": "v0.2.1",
   "component_metadata": {
     "path": "packaging/maia3/component-metadata.json",
     "sha256": "71f94b28a524866f983efee1feb4d4296f766a6f95e27e626ba19a5c96042a31"
@@ -53,5 +53,5 @@
     "repackages_upstream_material": false,
     "not_legal_advice": true
   },
-  "release_inputs_sha256": "7b815f1f350ad9d47765bd4e4e3f73378d4d623508bfd3f3b441cf6306d76f23"
+  "release_inputs_sha256": "aba387c7fb641739f642a7f1b99a5eeb0f34daabb96aca0d4a7d44a9097f2c5f"
 }

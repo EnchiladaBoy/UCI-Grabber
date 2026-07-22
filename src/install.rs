@@ -640,6 +640,18 @@ fn sync_tree(path: &Path) -> Result<()> {
 struct FileSync;
 
 impl FileSync {
+    #[cfg(windows)]
+    fn sync(path: &Path) -> Result<()> {
+        // File::open requests only read access. Windows' FlushFileBuffers,
+        // which backs File::sync_all, requires a handle opened for writing.
+        let file = OpenOptions::new()
+            .write(true)
+            .open(path)
+            .map_err(|source| Error::io(path, source))?;
+        file.sync_all().map_err(|source| Error::io(path, source))
+    }
+
+    #[cfg(not(windows))]
     fn sync(path: &Path) -> Result<()> {
         let file = fs::File::open(path).map_err(|source| Error::io(path, source))?;
         file.sync_all().map_err(|source| Error::io(path, source))
@@ -827,6 +839,16 @@ mod tests {
                 }],
             }],
         }
+    }
+
+    #[test]
+    fn sync_tree_flushes_dotfiles() {
+        let temporary = tempfile::tempdir().unwrap();
+        let source = temporary.path().join("chess-source/chess-1.11.2");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join(".editorconfig"), b"root = true\n").unwrap();
+
+        sync_tree(temporary.path()).unwrap();
     }
 
     #[cfg(unix)]

@@ -74,14 +74,14 @@ class ComponentTests(unittest.TestCase):
             self.assertEqual(output.value, expected)
 
     def test_checked_release_review_verifies_and_rejects_stale_inputs(self) -> None:
-        review_digest.verify_release("v0.2.0")
+        review_digest.verify_release("v0.2.1")
         checked = json.loads(review_digest.RELEASE_REVIEW_PATH.read_text(encoding="utf-8"))
         checked["release_inputs_sha256"] = "0" * 64
         with tempfile.TemporaryDirectory() as temporary:
             review_path = Path(temporary) / "release-review.json"
             review_path.write_text(json.dumps(checked), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "direct-release inputs review is stale"):
-                review_digest.verify_release("v0.2.0", review_path)
+                review_digest.verify_release("v0.2.1", review_path)
 
     def test_direct_notice_records_checkpoint_ambiguity_and_scope(self) -> None:
         notice = (ROOT / "DIRECT-DOWNLOAD-NOTICES.txt").read_text(encoding="utf-8")

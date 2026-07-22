@@ -77,10 +77,24 @@ jobs:
           test "$(python3 "$probe/packaging/maia3/review_digest.py" inputs)" = \
             "$(python3 packaging/maia3/review_digest.py inputs)"
           python3 "$probe/packaging/maia3/review_digest.py" \
-            verify-release --tag v0.2.0
+            verify-release --tag v0.2.1
       - name: Check Rust formatting
         run: cargo fmt --all --check
       - name: Lint all targets and features
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - name: Test all targets and features
         run: cargo test --workspace --all-targets --all-features --locked
+
+  windows-file-sync:
+    name: Windows staged-file durability regression
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: "1.92.0"
+      - name: Flush a staged dotfile with Windows handle semantics
+        run: cargo test --locked --lib sync_tree_flushes_dotfiles
